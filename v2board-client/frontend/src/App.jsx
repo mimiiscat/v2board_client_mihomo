@@ -27,16 +27,8 @@ function formatCurrencyCents(amount) {
 
 function formatLatency(value) {
   const delay = Number(value)
-  if (!Number.isFinite(delay) || delay <= 0) return '超时'
+  if (!Number.isFinite(delay) || delay <= 0) return ''
   return `${Math.round(delay)} ms`
-}
-
-function latencyColor(value) {
-  const delay = Number(value)
-  if (!Number.isFinite(delay) || delay <= 0) return '#ff6b6b'
-  if (delay < 200) return '#51cf66'
-  if (delay < 500) return '#ffd43b'
-  return '#ff922b'
 }
 
 function getPlanPrice(plan) {
@@ -71,6 +63,25 @@ function getPlanNameById(plans, planId) {
 
 function getPlanDescription(plan) {
   return plan?.content || plan?.description || plan?.remark || ''
+}
+
+function getLoginSiteName(appConfig, guestConfig) {
+  return (
+    guestConfig?.app_name ||
+    appConfig?.site_name ||
+    appConfig?.app_name ||
+    appConfig?.product_name ||
+    'v2Board'
+  )
+}
+
+function getLoginSiteDescription(appConfig, guestConfig) {
+  return (
+    guestConfig?.app_description ||
+    appConfig?.app_description ||
+    appConfig?.page_title ||
+    ''
+  )
 }
 
 function getPlanPeriods(plan) {
@@ -520,6 +531,8 @@ function LoginPage({ onLoginSuccess, appConfig }) {
   const isForgot = mode === 'forgot'
   const emailVerifyEnabled = !!guestConfig?.is_email_verify
   const needEmailCode = isRegister || isForgot
+  const siteName = getLoginSiteName(appConfig, guestConfig)
+  const siteDescription = getLoginSiteDescription(appConfig, guestConfig)
 
   const loadGuestConfig = async () => {
     setLoadingConfig(true)
@@ -640,9 +653,9 @@ function LoginPage({ onLoginSuccess, appConfig }) {
   return (
     <div>
       <div className="logo-icon">🌐</div>
-      <div className="page-title">{appConfig?.page_title || `${appConfig?.app_name || 'v2Board'} 客户端`}</div>
+      <div className="page-title">{siteName}</div>
       <div className="page-sub">
-        {isForgot ? '通过邮箱验证码找回密码' : isRegister ? (loadingConfig ? '正在检查邮箱验证配置…' : emailVerifyEnabled ? '创建新账户，需要邮箱验证码' : '创建新账户') : '登录你的账户'}
+        {siteDescription || (isForgot ? '通过邮箱验证码找回密码' : isRegister ? (loadingConfig ? '正在检查邮箱验证配置…' : emailVerifyEnabled ? '创建新账户，需要邮箱验证码' : '创建新账户') : '登录你的账户')}
       </div>
 
       <div className="card auth-card">
@@ -724,15 +737,12 @@ function LoginPage({ onLoginSuccess, appConfig }) {
 
 // ─── Dashboard ─────────────────────────────────────────────
 function Dashboard({ userInfo, onLogout, appConfig }) {
-  const delayTestUrl = ['https://cp.cloudflare.com/generate_204', 'https://www.google.com/generate_204', 'http://www.gstatic.com/generate_204']
-  const delayTestTimeout = 10000
   const [activeTab, setActiveTab] = useState('overview')
   const [proxyOn, setProxyOn] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [proxyTargetOn, setProxyTargetOn] = useState(null)
   const [plans, setPlans] = useState([])
 		  const [servers, setServers] = useState([])
-		  const [serverDelays, setServerDelays] = useState({})
-		  const [testingDelays, setTestingDelays] = useState(false)
 		  const [selectedServer, setSelectedServer] = useState('')
 		  const [activeServer, setActiveServer] = useState('')
 		  const [traffic, setTraffic] = useState({ up: 0, down: 0, uploadTotal: 0, downloadTotal: 0 })
@@ -778,51 +788,32 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
 	    })
 	  }, [])
 
-	  useEffect(() => {
-	    const electron = getElectron()
-	    electron.onServerDelayUpdate?.((payload) => {
-	      if (!payload?.name) return
-	      setServerDelays((prev) => ({ ...prev, [payload.name]: payload.delay }))
-	    })
-	  }, [])
-
 	  const handleToggle = async () => {
 	    setMsg('')
+	    const nextOn = !proxyOn
+	    setProxyTargetOn(nextOn)
+	    setProxyOn(nextOn)
 	    setLoading(true)
 	    try {
 	      const electron = getElectron()
 	      const result = await electron.toggleProxy()
-	      setProxyOn(result?.on || false)
+	      setProxyOn(result?.on ?? nextOn)
 	      if (result?.selectedProxyName) setSelectedServer(result.selectedProxyName)
 	      setActiveServer(result?.activeProxyName || '')
-	    } catch {}
+	    } catch {
+	      setProxyOn(!nextOn)
+	      setMsg('代理切换失败，请稍后重试')
+	    }
 	    setLoading(false)
+	    setProxyTargetOn(null)
 	  }
 
 	  const handleRefresh = async (action, setter) => {
 	    try {
 	      const electron = getElectron()
-	      const isServerAction = action === 'fetchServers' || action === 'reloadServers'
-	      if (isServerAction) setServerDelays({})
 	      const res = await electron[action]()
 	      if (res?.data) {
 	        setter(res.data)
-	        if (isServerAction) {
-	          const names = Array.isArray(res.data) ? res.data.map(s => s?.name).filter(Boolean) : []
-	          if (names.length && !names.includes(selectedServer)) {
-	            const first = names[0] || ''
-	            if (first) {
-	              setSelectedServer(first)
-	              await electron.setSelectedServer?.(first)
-	            }
-	          }
-	          if (names.length) {
-	            const delays = await electron.fetchServerDelays?.(names, delayTestUrl, delayTestTimeout, true)
-	            if (delays && typeof delays === 'object') setServerDelays(delays)
-	          } else {
-	            setServerDelays({})
-	          }
-	        }
 	      }
 	    } catch {}
 	  }
@@ -831,6 +822,7 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
 	    if (!data) return
 	    handleRefresh('fetchPlans', setPlans)
 	    handleRefresh('fetchServers', setServers)
+	    handleRefresh('fetchSubscribe', setSubData)
 	  }, [])
 
 	  useEffect(() => {
@@ -853,28 +845,6 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
 	    if (result?.proxyOn !== undefined) setProxyOn(result.proxyOn)
 	    setActiveServer(result?.activeProxyName || '')
 	    if (result?.proxyOn && result?.switched === false) setMsg('节点已保存，但 Mihomo 暂时没有切换成功，请重新开启代理')
-	    try {
-	      const electron = getElectron()
-	      const delays = await electron.fetchServerDelays?.([server.name], delayTestUrl, delayTestTimeout, false)
-	      if (delays && typeof delays === 'object') {
-	        setServerDelays((prev) => ({ ...prev, ...delays }))
-	      }
-	    } catch {}
-	  }
-
-	  const handleTestDelays = async () => {
-	    const names = Array.isArray(servers) ? servers.map((s) => s?.name).filter(Boolean) : []
-	    if (!names.length) return
-	    setMsg('')
-	    setTestingDelays(true)
-	    try {
-	      const electron = getElectron()
-	      const delays = await electron.fetchServerDelays?.(names, delayTestUrl, delayTestTimeout, true)
-	      if (delays && typeof delays === 'object') {
-	        setServerDelays(delays)
-	      }
-	    } catch {}
-	    setTestingDelays(false)
 	  }
 
   const openPurchase = async (plan) => {
@@ -966,8 +936,10 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
     setPurchaseLoading(false)
   }
 
-	  const trafficUsed = data ? (data.u || 0) + (data.d || 0) : 0
-	  const trafficTotal = data ? (data.transfer_enable || 0) : 0
+	  const subscribeTrafficUsed = (Number(subData?.u || 0) + Number(subData?.d || 0))
+	  const userTrafficUsed = (Number(data?.u || 0) + Number(data?.d || 0))
+	  const trafficUsed = subscribeTrafficUsed > 0 ? subscribeTrafficUsed : userTrafficUsed
+	  const trafficTotal = Number(subData?.transfer_enable || data?.transfer_enable || 0)
 	  const percent = trafficTotal > 0 ? Math.round((trafficUsed / trafficTotal) * 100) : 0
 	  const sessionTraffic = (traffic.uploadTotal || 0) + (traffic.downloadTotal || 0)
 	  const expiredAt = (() => {
@@ -979,10 +951,9 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
 	  })()
 
   const tabs = [
-    { key: 'overview', label: '概览' },
-    { key: 'plans', label: '套餐' },
     { key: 'servers', label: '节点' },
-    { key: 'subscribe', label: '订阅' },
+    { key: 'plans', label: '套餐' },
+    { key: 'overview', label: '概览' },
   ]
 
   return (
@@ -1004,12 +975,20 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
       {/* Proxy Toggle */}
       <div className="card toggle-row">
 	          <div>
-	            <div className="toggle-label">{proxyOn ? '🟢 代理已开启' : '🔴 代理已关闭'}</div>
-	            <div className="toggle-sub">{proxyOn ? 'mihomo 内核运行中' : '点击开关启动'}</div>
+	            <div className="toggle-label">
+	              {loading
+	                ? (proxyTargetOn ? '🟡 代理启动中' : '🟡 代理关闭中')
+	                : (proxyOn ? '🟢 代理已开启' : '🔴 代理已关闭')}
+	            </div>
+	            <div className="toggle-sub">
+	              {loading
+	                ? (proxyTargetOn ? '正在启动 mihomo…' : '正在关闭 mihomo…')
+	                : (proxyOn ? 'mihomo 内核运行中' : '点击开关启动')}
+	            </div>
 	            {selectedServer && <div className="selected-node">当前选择: {selectedServer}</div>}
 	            {proxyOn && activeServer && <div className="selected-node">实际生效: {activeServer}</div>}
 	          </div>
-        <button className={`toggle-switch ${proxyOn ? 'on' : 'off'}`} onClick={handleToggle} disabled={loading}>
+        <button className={`toggle-switch ${proxyOn ? 'on' : 'off'} ${loading ? 'pending' : ''}`} onClick={handleToggle} disabled={loading}>
           <div className="toggle-knob" />
         </button>
       </div>
@@ -1042,7 +1021,7 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
             }} />
           </div>
 	          <div style={{ fontSize: 11, color: '#888', marginTop: 6, textAlign: 'center' }}>
-	            套餐已用 {percent}% · 本次代理 {formatBytes(sessionTraffic)}
+	            已用 {formatBytes(trafficUsed)} / {formatBytes(trafficTotal)} · 套餐已用 {percent}% · 本次代理 {formatBytes(sessionTraffic)}
 	          </div>
 	        </div>
 	      )}
@@ -1111,37 +1090,29 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
       )}
 
       {/* Tab: Servers */}
-	      {activeTab === 'servers' && (
-	        <div className="card">
-	          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-	            <button className="btn-small" onClick={() => handleRefresh('reloadServers', setServers)}>🔄 刷新</button>
-	            <button className="btn-small" onClick={handleTestDelays} disabled={testingDelays || servers.length === 0}>
-	              {testingDelays ? '⏳ 测速中' : '⚡ 手动测速'}
-	            </button>
-	          </div>
-	          {servers.length > 0 ? (
-	            <div className="server-list">
-	              {servers.map((s, i) => (
+      {activeTab === 'servers' && (
+        <div className="card">
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            <button className="btn-small" onClick={() => handleRefresh('reloadServers', setServers)}>🔄 刷新</button>
+          </div>
+          {servers.length > 0 ? (
+            <div className="server-list">
+              {servers.map((s, i) => (
 	                <div
-	                  key={s.id || `${s.name}-${i}`}
-	                  className={`item-card selectable ${selectedServer === s.name ? 'selected' : ''}`}
-	                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-	                  onClick={() => handleSelectServer(s)}
-	                >
-	                  <div style={{ minWidth: 0 }}>
-	                    <div className="item-name">{s.name || `节点 ${i + 1}`}</div>
-	                  </div>
-	                  <div style={{ fontSize: 11, textAlign: 'right', marginLeft: 8, color: selectedServer === s.name ? '#8ea0ff' : latencyColor(serverDelays[s.name]) }}>
-	                    <div>{selectedServer === s.name ? '已选' : formatLatency(serverDelays[s.name])}</div>
-	                    {selectedServer === s.name && serverDelays[s.name] !== undefined && (
-	                      <div style={{ fontSize: 10, marginTop: 1, color: latencyColor(serverDelays[s.name]) }}>
-	                        {formatLatency(serverDelays[s.name])}
-	                      </div>
-	                    )}
-	                  </div>
-	                </div>
-	              ))}
-	            </div>
+                  key={s.id || `${s.name}-${i}`}
+                  className={`item-card selectable ${selectedServer === s.name ? 'selected' : ''}`}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  onClick={() => handleSelectServer(s)}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div className="item-name">{s.name || `节点 ${i + 1}`}</div>
+                  </div>
+                  <div style={{ fontSize: 11, textAlign: 'right', marginLeft: 8, color: '#8ea0ff' }}>
+                    <div>{selectedServer === s.name ? '已选' : ''}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
 	          ) : <div className="empty">暂无节点</div>}
 	        </div>
 	      )}

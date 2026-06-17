@@ -29,10 +29,6 @@ window.electronAPI = {
     if (window.__ELECTRON__) return window.__ELECTRON__.reloadServers()
     return Promise.resolve(null)
   },
-  fetchServerDelays: (names, testUrl, timeout, activateBeforeTest = false) => {
-    if (window.__ELECTRON__) return window.__ELECTRON__.fetchServerDelays(names, testUrl, timeout, activateBeforeTest)
-    return Promise.resolve({})
-  },
   fetchStat: () => {
     if (window.__ELECTRON__) return window.__ELECTRON__.fetchStat()
     return Promise.resolve(null)
@@ -101,11 +97,6 @@ window.electronAPI = {
   onTraffic: (cb) => {
     if (window.__ELECTRON__) {
       window.__ELECTRON__.onTraffic(cb)
-    }
-  },
-  onServerDelayUpdate: (cb) => {
-    if (window.__ELECTRON__) {
-      window.__ELECTRON__.onServerDelayUpdate(cb)
     }
   },
   logout: () => {

@@ -1091,9 +1091,6 @@ function setupIPC() {
     await reloadMihomoConfiguration()
     return result
   })
-  ipcMain.handle('fetch-server-delays', async (_, names, testUrl, timeout, activateBeforeTest = false) => {
-    return fetchMihomoProxyDelays(names, testUrl, timeout, activateBeforeTest)
-  })
   ipcMain.handle('fetch-stat', async () => fetchStat(authData))
   ipcMain.handle('fetch-guest-config', async () => fetchGuestConfig())
   ipcMain.handle('get-app-config', async () => getRuntimeConfig())
