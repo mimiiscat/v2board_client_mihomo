@@ -7,6 +7,7 @@ const net = require('net')
 const http = require('http')
 const killPort = require('kill-port')
 const YAML = require('js-yaml')
+const { shell, clipboard } = require('electron')
 
 let win = null
 let tray = null
@@ -736,6 +737,34 @@ async function fetchGuestConfig() {
   return apiRequest('GET', '/guest/comm/config')
 }
 
+async function checkCoupon(code, planId) {
+  return apiRequest('POST', '/user/coupon/check', {
+    code,
+    plan_id: planId,
+  }, authData)
+}
+
+async function fetchPaymentMethods() {
+  return apiRequest('GET', '/user/order/getPaymentMethod', null, authData)
+}
+
+async function createOrder({ plan_id, cycle, coupon_code, deposit_amount }) {
+  return apiRequest('POST', '/user/order/save', {
+    plan_id,
+    cycle,
+    coupon_code,
+    deposit_amount,
+  }, authData)
+}
+
+async function checkoutOrder({ trade_no, method, token }) {
+  return apiRequest('POST', '/user/order/checkout', {
+    trade_no,
+    method,
+    token,
+  }, authData)
+}
+
 async function doLogin(email, password) {
   return apiRequest('POST', '/passport/auth/login', { email, password })
 }
@@ -908,6 +937,24 @@ function setupIPC() {
   ipcMain.handle('fetch-guest-config', async () => fetchGuestConfig())
   ipcMain.handle('send-email-verify', async (_, email, isforget) => sendEmailVerify(email, isforget))
   ipcMain.handle('forget-password', async (_, email, password, emailCode) => doForgetPassword(email, password, emailCode))
+  ipcMain.handle('check-coupon', async (_, code, planId) => checkCoupon(code, planId))
+  ipcMain.handle('fetch-payment-methods', async () => fetchPaymentMethods())
+  ipcMain.handle('create-order', async (_, payload) => createOrder(payload || {}))
+  ipcMain.handle('checkout-order', async (_, payload) => checkoutOrder(payload || {}))
+  ipcMain.handle('open-external', async (_, url) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      await shell.openExternal(url)
+      return { success: true }
+    }
+    return { success: false }
+  })
+  ipcMain.handle('copy-text', async (_, text) => {
+    if (typeof text === 'string') {
+      clipboard.writeText(text)
+      return { success: true }
+    }
+    return { success: false }
+  })
 
   // Proxy
   ipcMain.handle('toggle-proxy', async () => {

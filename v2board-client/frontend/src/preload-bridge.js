@@ -49,6 +49,30 @@ window.electronAPI = {
     if (window.__ELECTRON__) return window.__ELECTRON__.setServer(url)
     return Promise.resolve({ success: false })
   },
+  checkCoupon: (code, planId) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.checkCoupon(code, planId)
+    return Promise.resolve({ success: false })
+  },
+  fetchPaymentMethods: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.fetchPaymentMethods()
+    return Promise.resolve({ data: [] })
+  },
+  createOrder: (payload) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.createOrder(payload)
+    return Promise.resolve({ success: false })
+  },
+  checkoutOrder: (payload) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.checkoutOrder(payload)
+    return Promise.resolve({ success: false })
+  },
+  openExternal: (url) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.openExternal(url)
+    return Promise.resolve({ success: false })
+  },
+  copyText: (text) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.copyText(text)
+    return Promise.resolve({ success: false })
+  },
   sendEmailVerify: (email, isforget) => {
     if (window.__ELECTRON__) return window.__ELECTRON__.sendEmailVerify(email, isforget)
     return Promise.resolve({ success: false })

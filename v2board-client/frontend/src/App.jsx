@@ -73,6 +73,53 @@ function getPlanDescription(plan) {
   return plan?.content || plan?.description || plan?.remark || ''
 }
 
+function getPlanPeriods(plan) {
+  const periods = [
+    ['month_price', '月付'],
+    ['quarter_price', '季付'],
+    ['half_year_price', '半年'],
+    ['year_price', '年付'],
+    ['two_year_price', '两年'],
+    ['three_year_price', '三年'],
+    ['onetime_price', '一次性'],
+    ['reset_price', '重置'],
+  ]
+
+  return periods
+    .map(([key, label]) => {
+      const value = Number(plan?.[key] || 0)
+      return value > 0 ? { key, label, value: value / 100 } : null
+    })
+    .filter(Boolean)
+}
+
+function normalizePaymentMethods(payload) {
+  const list = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : []
+  return list.map((item, index) => {
+    if (typeof item === 'string') {
+      return { id: item, name: item, payment: item }
+    }
+    return {
+      id: item?.id ?? item?.payment ?? index,
+      name: item?.name || item?.payment || `支付方式 ${index + 1}`,
+      payment: item?.payment || item?.name || '',
+    }
+  })
+}
+
+function extractTradeNo(payload) {
+  return payload?.data?.trade_no
+    || payload?.data?.tradeNo
+    || payload?.trade_no
+    || payload?.tradeNo
+    || payload?.data
+    || ''
+}
+
+function isLikelyUrl(text) {
+  return typeof text === 'string' && /^https?:\/\//i.test(text)
+}
+
 function sanitizeHtml(html) {
   if (!html) return ''
   if (typeof document === 'undefined') return String(html)
@@ -119,6 +166,141 @@ function sanitizeHtml(html) {
 
   walk(doc.body)
   return doc.body.innerHTML
+}
+
+function PurchaseModal({
+  plan,
+  periods,
+  periodKey,
+  onPeriodChange,
+  couponCode,
+  onCouponCodeChange,
+  paymentMethods,
+  paymentMethodId,
+  onPaymentMethodChange,
+  loading,
+  message,
+  result,
+  onClose,
+  onConfirm,
+  onOpenExternal,
+  onCopyText,
+}) {
+  if (!plan) return null
+
+  const checkoutValue = result?.checkoutValue || ''
+  const checkoutType = result?.checkoutType
+  const checkoutUrl = isLikelyUrl(checkoutValue) ? checkoutValue : ''
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-panel">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">购买套餐</div>
+            <div className="modal-sub">{plan.name}</div>
+          </div>
+          <button className="close-btn" onClick={onClose}>✕</button>
+        </div>
+
+        {!result ? (
+          <>
+            <div className="modal-section">
+              <div className="label">订阅周期</div>
+              <div className="period-grid">
+                {periods.map((period) => (
+                  <button
+                    key={period.key}
+                    type="button"
+                    className={`period-chip ${periodKey === period.key ? 'active' : ''}`}
+                    onClick={() => onPeriodChange(period.key)}
+                  >
+                    <span>{period.label}</span>
+                    <span>¥{period.value.toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="modal-section">
+              <div className="label">优惠码</div>
+              <input
+                className="input"
+                placeholder="可选"
+                value={couponCode}
+                onChange={(e) => onCouponCodeChange(e.target.value)}
+                style={{ marginBottom: 0 }}
+              />
+            </div>
+
+            <div className="modal-section">
+              <div className="label">支付方式</div>
+              {paymentMethods.length > 0 ? (
+                <div className="payment-list">
+                  {paymentMethods.map((method) => (
+                    <button
+                      key={String(method.id)}
+                      type="button"
+                      className={`payment-item ${String(paymentMethodId) === String(method.id) ? 'active' : ''}`}
+                      onClick={() => onPaymentMethodChange(method.id)}
+                    >
+                      <div className="payment-name">{method.name}</div>
+                      {method.payment && <div className="payment-meta">{method.payment}</div>}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty" style={{ padding: '12px 0 0' }}>暂无可用支付方式</div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="modal-section">
+            <div className="success-msg" style={{ marginTop: 0, marginBottom: 10 }}>订单已创建</div>
+            <div className="order-box">
+              <div className="order-row">
+                <span>订单号</span>
+                <span>{result.tradeNo}</span>
+              </div>
+              <div className="order-row">
+                <span>支付类型</span>
+                <span>{checkoutType === 0 ? '二维码' : '链接'}</span>
+              </div>
+            </div>
+            {checkoutValue ? (
+              <div className="order-output">{checkoutValue}</div>
+            ) : (
+              <div className="empty">订单已创建，暂无支付内容</div>
+            )}
+            <div className="auth-actions" style={{ marginTop: 10 }}>
+              {checkoutUrl && (
+                <button className="btn-secondary" onClick={() => onOpenExternal(checkoutUrl)}>
+                  打开支付页
+                </button>
+              )}
+              {checkoutValue && (
+                <button className="btn-secondary" onClick={() => onCopyText(checkoutValue)}>
+                  复制内容
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {message && <div className={message.type === 'success' ? 'success-msg' : 'error-msg'}>{message.text}</div>}
+
+        <div className="auth-actions" style={{ marginTop: 12 }}>
+          {!result ? (
+            <button className="btn" onClick={onConfirm} disabled={loading || periods.length === 0}>
+              {loading ? '处理中...' : '创建订单并结算'}
+            </button>
+          ) : (
+            <button className="btn" onClick={onClose}>完成</button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ─── Styles ────────────────────────────────────────────────
@@ -188,6 +370,27 @@ const css = `
 .item-content { font-size: 11px; color: #aeb4d1; margin-top: 4px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .item-desc { font-size: 11px; color: #888; margin-top: 3px; }
 .item-price { font-size: 15px; font-weight: 700; color: #667eea; margin-top: 4px; }
+.item-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; }
+.item-buy { width: auto; padding: 6px 14px; min-width: 74px; margin-top: 0; }
+
+/* Purchase modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(6, 8, 20, 0.72); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 18px; }
+.modal-panel { width: 100%; max-width: 360px; max-height: 88vh; overflow-y: auto; background: #18183a; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.35); }
+.modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.modal-title { font-size: 15px; font-weight: 700; color: #fff; }
+.modal-sub { font-size: 11px; color: #8d93bd; margin-top: 2px; }
+.modal-section { margin-top: 12px; }
+.period-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.period-chip { width: 100%; text-align: left; padding: 9px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.04); color: #cfd3ef; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.period-chip.active { border-color: rgba(102,126,234,0.7); background: rgba(102,126,234,0.16); color: #fff; }
+.payment-list { display: grid; gap: 8px; }
+.payment-item { width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.04); color: #cfd3ef; cursor: pointer; }
+.payment-item.active { border-color: rgba(102,126,234,0.7); background: rgba(102,126,234,0.16); }
+.payment-name { font-size: 12px; font-weight: 600; color: #fff; }
+.payment-meta { font-size: 10px; color: #8d93bd; margin-top: 2px; }
+.order-box { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; }
+.order-row { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: #cfd3ef; padding: 4px 0; word-break: break-all; }
+.order-output { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); color: #aeb4d1; font-size: 10px; word-break: break-all; line-height: 1.5; }
 
 /* Settings modal */
 .settings-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
@@ -517,6 +720,15 @@ function Dashboard({ userInfo, onLogout }) {
 		  const [activeServer, setActiveServer] = useState('')
 		  const [traffic, setTraffic] = useState({ up: 0, down: 0, uploadTotal: 0, downloadTotal: 0 })
 		  const [subData, setSubData] = useState(null)
+  const [purchasePlan, setPurchasePlan] = useState(null)
+  const [purchasePeriods, setPurchasePeriods] = useState([])
+  const [purchasePeriod, setPurchasePeriod] = useState('')
+  const [purchaseCoupon, setPurchaseCoupon] = useState('')
+  const [paymentMethods, setPaymentMethods] = useState([])
+  const [paymentMethodId, setPaymentMethodId] = useState('')
+  const [purchaseLoading, setPurchaseLoading] = useState(false)
+  const [purchaseMessage, setPurchaseMessage] = useState(null)
+  const [purchaseResult, setPurchaseResult] = useState(null)
 	  const [msg, setMsg] = useState('')
 
   const data = userInfo?.data
@@ -615,6 +827,95 @@ function Dashboard({ userInfo, onLogout }) {
 	    setActiveServer(result?.activeProxyName || '')
 	    if (result?.proxyOn && result?.switched === false) setMsg('节点已保存，但 Mihomo 暂时没有切换成功，请重新开启代理')
 	  }
+
+  const openPurchase = async (plan) => {
+    const periods = getPlanPeriods(plan)
+    setPurchasePlan(plan)
+    setPurchasePeriods(periods)
+    setPurchasePeriod(periods[0]?.key || '')
+    setPurchaseCoupon('')
+    setPaymentMethods([])
+    setPaymentMethodId('')
+    setPurchaseLoading(false)
+    setPurchaseMessage(null)
+    setPurchaseResult(null)
+    try {
+      const res = await getElectron().fetchPaymentMethods?.()
+      const methods = normalizePaymentMethods(res)
+      setPaymentMethods(methods)
+      setPaymentMethodId(methods[0]?.id ?? '')
+    } catch {
+      setPaymentMethods([])
+    }
+  }
+
+  const closePurchase = () => {
+    setPurchasePlan(null)
+    setPurchasePeriods([])
+    setPurchasePeriod('')
+    setPurchaseCoupon('')
+    setPaymentMethods([])
+    setPaymentMethodId('')
+    setPurchaseLoading(false)
+    setPurchaseMessage(null)
+    setPurchaseResult(null)
+  }
+
+  const confirmPurchase = async () => {
+    if (!purchasePlan || !purchasePeriod) {
+      setPurchaseMessage({ type: 'error', text: '请选择可购买的订阅周期' })
+      return
+    }
+
+    setPurchaseLoading(true)
+    setPurchaseMessage(null)
+
+    try {
+      const electron = getElectron()
+      const coupon = purchaseCoupon.trim()
+      if (coupon) {
+        const couponRes = await electron.checkCoupon?.(coupon, purchasePlan.id)
+        if (couponRes?.success === false || couponRes?.message || couponRes?.error) {
+          throw new Error(couponRes?.message || couponRes?.error || '优惠码校验失败')
+        }
+      }
+
+      const orderRes = await electron.createOrder?.({
+        plan_id: purchasePlan.id,
+        cycle: purchasePeriod,
+        coupon_code: coupon,
+      })
+      const tradeNo = extractTradeNo(orderRes)
+      if (!tradeNo) {
+        throw new Error(orderRes?.message || orderRes?.error || '创建订单失败')
+      }
+
+      const methodId = paymentMethodId || paymentMethods[0]?.id
+      if (!methodId) {
+        setPurchaseResult({ tradeNo, checkoutType: null, checkoutValue: '' })
+        setPurchaseMessage({ type: 'success', text: '订单已创建，暂无可用支付方式' })
+        return
+      }
+
+      const checkoutRes = await electron.checkoutOrder?.({
+        trade_no: tradeNo,
+        method: methodId,
+      })
+      const checkoutType = Number(checkoutRes?.type ?? (isLikelyUrl(checkoutRes?.data) ? 1 : 0))
+      const checkoutValue = checkoutRes?.data?.data || checkoutRes?.data || ''
+      setPurchaseResult({ tradeNo, checkoutType, checkoutValue })
+
+      if (isLikelyUrl(checkoutValue)) {
+        await electron.openExternal?.(checkoutValue)
+      }
+
+      setPurchaseMessage({ type: 'success', text: '订单已创建，请完成支付' })
+    } catch (err) {
+      setPurchaseMessage({ type: 'error', text: err.message || '购买失败' })
+    }
+
+    setPurchaseLoading(false)
+  }
 
 	  const trafficUsed = data ? (data.u || 0) + (data.d || 0) : 0
 	  const trafficTotal = data ? (data.transfer_enable || 0) : 0
@@ -729,15 +1030,26 @@ function Dashboard({ userInfo, onLogout }) {
               {getPlanDescription(p) && (
                 <div className="item-content" dangerouslySetInnerHTML={{ __html: sanitizeHtml(getPlanDescription(p)) }} />
               )}
-              <div className="item-price">
-                {(() => {
-                  const price = getPlanPrice(p)
-                  return price.value !== null
-                    ? <>¥{price.value.toFixed(2)} <span style={{ fontSize: 11, color: '#888' }}>/{price.label}</span></>
-                    : <span style={{ color: '#888', fontSize: 12 }}>暂无价格</span>
-                })()}
+              <div className="item-actions">
+                <div>
+                  <div className="item-price">
+                    {(() => {
+                      const price = getPlanPrice(p)
+                      return price.value !== null
+                        ? <>¥{price.value.toFixed(2)} <span style={{ fontSize: 11, color: '#888' }}>/{price.label}</span></>
+                        : <span style={{ color: '#888', fontSize: 12 }}>暂无价格</span>
+                    })()}
+                  </div>
+                  <div className="item-desc">{formatPlanTraffic(p.transfer_enable)}</div>
+                </div>
+                <button
+                  className="btn-small item-buy"
+                  onClick={() => openPurchase(p)}
+                  disabled={getPlanPeriods(p).length === 0}
+                >
+                  购买
+                </button>
               </div>
-              <div className="item-desc">{formatPlanTraffic(p.transfer_enable)}</div>
             </div>
           )) : <div className="empty">暂无套餐</div>}
         </div>
@@ -789,6 +1101,27 @@ function Dashboard({ userInfo, onLogout }) {
             </div>
           ) : <div className="empty">暂无订阅</div>}
         </div>
+      )}
+
+      {purchasePlan && (
+        <PurchaseModal
+          plan={purchasePlan}
+          periods={purchasePeriods}
+          periodKey={purchasePeriod}
+          onPeriodChange={setPurchasePeriod}
+          couponCode={purchaseCoupon}
+          onCouponCodeChange={setPurchaseCoupon}
+          paymentMethods={paymentMethods}
+          paymentMethodId={paymentMethodId}
+          onPaymentMethodChange={setPaymentMethodId}
+          loading={purchaseLoading}
+          message={purchaseMessage}
+          result={purchaseResult}
+          onClose={closePurchase}
+          onConfirm={confirmPurchase}
+          onOpenExternal={(url) => getElectron().openExternal?.(url)}
+          onCopyText={(text) => getElectron().copyText?.(text)}
+        />
       )}
     </div>
   )
