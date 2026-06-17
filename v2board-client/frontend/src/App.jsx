@@ -470,6 +470,21 @@ function Dashboard({ userInfo, onLogout }) {
 	    } catch {}
 	  }
 
+	  useEffect(() => {
+	    if (!data) return
+	    handleRefresh('fetchPlans', setPlans)
+	    handleRefresh('fetchServers', setServers)
+	  }, [])
+
+	  useEffect(() => {
+	    if (activeTab === 'plans') {
+	      handleRefresh('fetchPlans', setPlans)
+	    }
+	    if (activeTab === 'servers') {
+	      handleRefresh('fetchServers', setServers)
+	    }
+	  }, [activeTab])
+
 	  const handleSelectServer = async (server) => {
 	    if (!server?.name) return
 	    setMsg('')
