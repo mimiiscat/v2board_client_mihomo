@@ -210,6 +210,73 @@ function appendQuery(url, params) {
   }
 }
 
+function sendServerLatencyUpdate(key, latency) {
+  win?.webContents.send('server-latency-update', { key, latency })
+}
+
+function measureTcpLatency(host, port, timeout = 3000) {
+  return new Promise((resolve) => {
+    if (!host || !port) {
+      resolve(null)
+      return
+    }
+
+    const startedAt = Date.now()
+    const socket = new net.Socket()
+    let settled = false
+
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      try { socket.destroy() } catch (_) {}
+      resolve(value)
+    }
+
+    socket.setTimeout(timeout)
+    socket.once('connect', () => finish(Date.now() - startedAt))
+    socket.once('timeout', () => finish(null))
+    socket.once('error', () => finish(null))
+
+    try {
+      socket.connect(Number(port), host)
+    } catch (_) {
+      finish(null)
+    }
+  })
+}
+
+async function measureServerLatencies(targets, timeout = 3000) {
+  const list = Array.isArray(targets) ? targets.filter(Boolean) : []
+  const result = {}
+  const concurrency = 6
+  let index = 0
+
+  async function worker() {
+    while (index < list.length) {
+      const current = list[index++]
+      const key = String(current?.key || '').trim()
+      const candidates = Array.isArray(current?.candidates) ? current.candidates : []
+      if (!key || !candidates.length) continue
+
+      let latency = null
+      for (const candidate of candidates) {
+        const host = String(candidate?.host || '').trim()
+        const port = Number(candidate?.port || 0)
+        if (!host || !port) continue
+        latency = await measureTcpLatency(host, port, timeout)
+        if (Number.isFinite(latency) && latency > 0) break
+      }
+
+      result[key] = latency
+      sendServerLatencyUpdate(key, latency)
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, list.length) }, () => worker())
+  await Promise.all(workers)
+  return result
+}
+
 function readCachedSubscription() {
   try {
     const cachePath = getSavedSubscriptionPath()
@@ -1096,6 +1163,9 @@ function setupIPC() {
     const result = await fetchServers(authData)
     await reloadMihomoConfiguration()
     return result
+  })
+  ipcMain.handle('fetch-server-latencies', async (_, targets, timeout = 3000) => {
+    return measureServerLatencies(targets, timeout)
   })
   ipcMain.handle('fetch-stat', async () => fetchStat(authData))
   ipcMain.handle('fetch-guest-config', async () => fetchGuestConfig())

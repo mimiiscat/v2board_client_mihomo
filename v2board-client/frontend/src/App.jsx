@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 // ─── Electron IPC Bridge ───────────────────────────────────
 function getElectron() {
@@ -26,9 +26,19 @@ function formatCurrencyCents(amount) {
 }
 
 function formatLatency(value) {
+  if (value === null) return '不可测'
   const delay = Number(value)
   if (!Number.isFinite(delay) || delay <= 0) return ''
   return `${Math.round(delay)} ms`
+}
+
+function latencyColor(value) {
+  if (value === null) return '#ff6b6b'
+  const delay = Number(value)
+  if (!Number.isFinite(delay) || delay <= 0) return '#8d93bd'
+  if (delay < 120) return '#51cf66'
+  if (delay < 250) return '#ffd43b'
+  return '#ff922b'
 }
 
 function getPlanPrice(plan) {
@@ -63,6 +73,68 @@ function getPlanNameById(plans, planId) {
 
 function getPlanDescription(plan) {
   return plan?.content || plan?.description || plan?.remark || ''
+}
+
+function normalizeServerList(list) {
+  if (!Array.isArray(list)) return []
+  const seen = new Map()
+  const signature = (server) => JSON.stringify([
+    String(server?.name || '').trim(),
+    String(server?.host || server?.server || '').trim(),
+    String(server?.port || server?.server_port || '').trim(),
+    String(server?.type || '').trim(),
+    String(server?.network || '').trim(),
+    String(server?.uuid || '').trim(),
+    String(server?.flow || '').trim(),
+    String(server?.sort || '').trim(),
+  ])
+  for (const server of list) {
+    const key = signature(server)
+    if (!key || key === '["","","","","","","",""]') continue
+    seen.set(key, server)
+  }
+  return Array.from(seen.values())
+}
+
+function getServerLatencyKey(server) {
+  return JSON.stringify([
+    String(server?.name || '').trim(),
+    String(server?.host || server?.server || '').trim(),
+    String(server?.port || server?.server_port || '').trim(),
+    String(server?.type || '').trim(),
+  ])
+}
+
+function getServerLatencyTargets(list) {
+  if (!Array.isArray(list)) return []
+  return list
+    .map((server) => {
+      const key = getServerLatencyKey(server)
+      const host = String(server?.host || server?.server || '').trim()
+      const port = Number(server?.server_port || server?.port || 0)
+      const serverName = String(server?.server_name || '').trim()
+      const type = String(server?.type || '').trim()
+      const version = Number(server?.version || 0)
+      const candidates = []
+
+      if (host && port) candidates.push({ host, port })
+
+      // hy2 often exposes only UDP on its service port, so use a best-effort TCP fallback
+      if (type === 'hysteria' && version === 2) {
+        if (serverName) candidates.push({ host: serverName, port: 443 })
+        if (host) candidates.push({ host, port: 443 })
+        if (serverName) candidates.push({ host: serverName, port: 80 })
+        if (host) candidates.push({ host, port: 80 })
+      }
+
+      const uniqueCandidates = candidates.filter((candidate, index, arr) => {
+        const sig = `${candidate.host}:${candidate.port}`
+        return arr.findIndex((item) => `${item.host}:${item.port}` === sig) === index
+      })
+
+      return { key, candidates: uniqueCandidates }
+    })
+    .filter((item) => item.key && item.candidates.length)
 }
 
 function getLoginSiteName(appConfig, guestConfig) {
@@ -347,6 +419,22 @@ const css = `
 .btn-small { padding: 6px 14px; border-radius: 6px; border: none; background: rgba(102,126,234,0.2); color: #667eea; font-size: 12px; cursor: pointer; font-weight: 500; transition: background 0.2s; }
 .btn-small { min-width: 82px; }
 .btn-small:hover { background: rgba(102,126,234,0.3); }
+.btn-small.node-refresh-btn.loading {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, rgba(102,126,234,0.2), rgba(118,75,162,0.28), rgba(102,126,234,0.2));
+  background-size: 200% 100%;
+  animation: node-refresh-shimmer 1.2s linear infinite;
+  cursor: wait;
+}
+.btn-small.node-refresh-btn.loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.12) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: node-refresh-sweep 1.1s ease-in-out infinite;
+}
 
 .error-msg { color: #ff6b6b; font-size: 11px; margin-top: -4px; margin-bottom: 6px; }
 .success-msg { color: #51cf66; font-size: 11px; margin-top: -4px; margin-bottom: 6px; }
@@ -432,7 +520,15 @@ const css = `
 	.auth-hint { font-size: 10px; color: #8890b8; line-height: 1.4; margin-top: 6px; }
 	.auth-submit-wrap { margin-top: 12px; }
 		.server-list { overflow: visible; padding-right: 2px; }
-	.selected-node { font-size: 10px; color: #8ea0ff; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-node { font-size: 10px; color: #8ea0ff; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes node-refresh-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+@keyframes node-refresh-sweep {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
 	`
 
 function App() {
@@ -757,6 +853,11 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
   const [purchaseMessage, setPurchaseMessage] = useState(null)
   const [purchaseResult, setPurchaseResult] = useState(null)
 	  const [msg, setMsg] = useState('')
+  const [nodeFeedback, setNodeFeedback] = useState(null)
+  const [updatingNodes, setUpdatingNodes] = useState(false)
+  const [serverLatencies, setServerLatencies] = useState({})
+  const nodeFeedbackTimer = useRef(null)
+  const latencyRunRef = useRef(0)
 
   const data = userInfo?.data
 
@@ -788,6 +889,14 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
 	    })
 	  }, [])
 
+	  useEffect(() => {
+	    const electron = getElectron()
+	    electron.onServerLatencyUpdate?.((payload) => {
+	      if (!payload?.key) return
+	      setServerLatencies((prev) => ({ ...prev, [payload.key]: payload.latency }))
+	    })
+	  }, [])
+
 	  const handleToggle = async () => {
 	    setMsg('')
 	    const nextOn = !proxyOn
@@ -813,10 +922,55 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
 	      const electron = getElectron()
 	      const res = await electron[action]()
 	      if (res?.data) {
-	        setter(res.data)
+	        const nextData = action === 'fetchServers' || action === 'reloadServers'
+	          ? normalizeServerList(res.data)
+	          : res.data
+	        setter(nextData)
+	        return true
 	      }
 	    } catch {}
+	    return false
 	  }
+
+	  const startServerLatencyCheck = async (list) => {
+	    const normalized = normalizeServerList(list)
+	    const targets = getServerLatencyTargets(normalized)
+	    const runId = Date.now()
+	    latencyRunRef.current = runId
+	    setServerLatencies({})
+	    if (!targets.length) return
+
+	    try {
+	      await getElectron().fetchServerLatencies?.(targets, 3000)
+	      if (latencyRunRef.current !== runId) return
+	    } catch {}
+	  }
+
+	  const handleUpdateServers = async () => {
+	    if (nodeFeedbackTimer.current) {
+	      clearTimeout(nodeFeedbackTimer.current)
+	      nodeFeedbackTimer.current = null
+	    }
+	    setNodeFeedback(null)
+	    setServers([])
+	    setServerLatencies({})
+	    setUpdatingNodes(true)
+	    const ok = await handleRefresh('reloadServers', setServers)
+	    setUpdatingNodes(false)
+	    if (ok) {
+	      setNodeFeedback({ type: 'success', text: '更新成功' })
+	      nodeFeedbackTimer.current = setTimeout(() => {
+	        setNodeFeedback(null)
+	        nodeFeedbackTimer.current = null
+	      }, 3000)
+	    } else {
+	      setNodeFeedback({ type: 'error', text: '获取失败' })
+	    }
+	  }
+
+	  useEffect(() => () => {
+	    if (nodeFeedbackTimer.current) clearTimeout(nodeFeedbackTimer.current)
+	  }, [])
 
 	  useEffect(() => {
 	    if (!data) return
@@ -824,6 +978,15 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
 	    handleRefresh('fetchServers', setServers)
 	    handleRefresh('fetchSubscribe', setSubData)
 	  }, [])
+
+	  useEffect(() => {
+	    if (activeTab !== 'servers') return
+	    if (!servers.length) {
+	      setServerLatencies({})
+	      return
+	    }
+	    startServerLatencyCheck(servers)
+	  }, [activeTab, servers])
 
 	  useEffect(() => {
 	    if (activeTab === 'plans') {
@@ -1093,8 +1256,15 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
       {activeTab === 'servers' && (
         <div className="card">
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-            <button className="btn-small" onClick={() => handleRefresh('reloadServers', setServers)}>🔄 刷新</button>
+            <button className={`btn-small node-refresh-btn ${updatingNodes ? 'loading' : ''}`} onClick={handleUpdateServers} disabled={updatingNodes}>
+              {updatingNodes ? '⏳ 更新中' : '🔄 更新节点'}
+            </button>
           </div>
+          {nodeFeedback && (
+            <div className={nodeFeedback.type === 'success' ? 'success-msg' : 'error-msg'} style={{ marginTop: -4, marginBottom: 8 }}>
+              {nodeFeedback.text}
+            </div>
+          )}
           {servers.length > 0 ? (
             <div className="server-list">
               {servers.map((s, i) => (
@@ -1107,8 +1277,13 @@ function Dashboard({ userInfo, onLogout, appConfig }) {
                   <div style={{ minWidth: 0 }}>
                     <div className="item-name">{s.name || `节点 ${i + 1}`}</div>
                   </div>
-                  <div style={{ fontSize: 11, textAlign: 'right', marginLeft: 8, color: '#8ea0ff' }}>
-                    <div>{selectedServer === s.name ? '已选' : ''}</div>
+                  <div style={{ fontSize: 11, textAlign: 'right', marginLeft: 12, minWidth: 64 }}>
+                    <div style={{ color: latencyColor(serverLatencies[getServerLatencyKey(s)]) }}>
+                      {formatLatency(serverLatencies[getServerLatencyKey(s)]) || '检测中'}
+                    </div>
+                    <div style={{ color: '#8ea0ff', marginTop: 2 }}>
+                      {selectedServer === s.name ? '已选' : ''}
+                    </div>
                   </div>
                 </div>
               ))}

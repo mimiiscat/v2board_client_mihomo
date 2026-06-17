@@ -29,6 +29,10 @@ window.electronAPI = {
     if (window.__ELECTRON__) return window.__ELECTRON__.reloadServers()
     return Promise.resolve(null)
   },
+  fetchServerLatencies: (targets, timeout = 3000) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.fetchServerLatencies(targets, timeout)
+    return Promise.resolve({})
+  },
   fetchStat: () => {
     if (window.__ELECTRON__) return window.__ELECTRON__.fetchStat()
     return Promise.resolve(null)
@@ -97,6 +101,11 @@ window.electronAPI = {
   onTraffic: (cb) => {
     if (window.__ELECTRON__) {
       window.__ELECTRON__.onTraffic(cb)
+    }
+  },
+  onServerLatencyUpdate: (cb) => {
+    if (window.__ELECTRON__) {
+      window.__ELECTRON__.onServerLatencyUpdate(cb)
     }
   },
   logout: () => {
