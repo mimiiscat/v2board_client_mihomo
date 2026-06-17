@@ -183,7 +183,7 @@ function LoginPage({ onLoginSuccess }) {
   const isRegister = mode === 'register'
   const isForgot = mode === 'forgot'
   const emailVerifyEnabled = !!guestConfig?.is_email_verify
-  const needEmailCode = isForgot || emailVerifyEnabled
+  const needEmailCode = isRegister || isForgot
 
   const loadGuestConfig = async () => {
     setLoadingConfig(true)
