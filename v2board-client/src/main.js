@@ -951,7 +951,7 @@ else {
   })
 
   app.on('ready', () => {
-    if (process.platform === 'darwin') app.dock.hide()
+    if (process.platform === 'darwin' && typeof app.dock?.show === 'function') app.dock.show()
     global.isQuit = false
     init()
   })

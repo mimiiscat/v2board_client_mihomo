@@ -31,14 +31,15 @@ const css = `
 
 .card { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.06); }
 .input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: #e0e0e0; font-size: 13px; outline: none; transition: border-color 0.2s; }
+.input { margin-bottom: 10px; }
 .input:focus { border-color: rgba(102,126,234,0.5); }
 .input::placeholder { color: rgba(255,255,255,0.25); }
 .label { font-size: 11px; color: #777; margin-bottom: 6px; display: block; }
-.btn { width: 100%; padding: 11px 0; border-radius: 10px; border: none; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.2s, transform 0.1s; }
+.btn { width: 100%; padding: 11px 0; border-radius: 10px; border: none; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.2s, transform 0.1s; margin-top: 6px; }
 .btn:hover { opacity: 0.9; }
 .btn:active { transform: scale(0.98); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-secondary { width: 100%; padding: 9px 0; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #aaa; font-size: 12px; cursor: pointer; margin-top: 8px; transition: all 0.2s; }
+.btn-secondary { width: 100%; padding: 9px 0; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #aaa; font-size: 12px; cursor: pointer; margin-top: 10px; transition: all 0.2s; }
 .btn-secondary:hover { border-color: rgba(255,255,255,0.2); color: #ddd; }
 .btn-small { padding: 6px 14px; border-radius: 6px; border: none; background: rgba(102,126,234,0.2); color: #667eea; font-size: 12px; cursor: pointer; font-weight: 500; transition: background 0.2s; }
 .btn-small { min-width: 82px; }
@@ -97,12 +98,14 @@ const css = `
 	.logo-icon { font-size: 36px; text-align: center; margin-bottom: 6px; }
 .page-title { text-align: center; font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px; }
 .page-sub { text-align: center; font-size: 11px; color: #888; margin-bottom: 20px; }
-	.auth-card { position: relative; overflow: hidden; border: 1px solid rgba(102,126,234,0.18); box-shadow: 0 14px 40px rgba(0,0,0,0.22); }
+	.auth-card { position: relative; overflow: hidden; border: 1px solid rgba(102,126,234,0.18); box-shadow: 0 14px 40px rgba(0,0,0,0.22); padding: 18px 16px 16px; }
 	.auth-card::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 28%); }
 	.auth-card > * { position: relative; z-index: 1; }
+	.auth-card form > * + * { margin-top: 2px; }
 	.auth-actions { display: flex; gap: 8px; margin-top: 8px; }
 	.auth-actions .btn-secondary { margin-top: 0; }
 	.auth-hint { font-size: 10px; color: #8890b8; line-height: 1.4; margin-top: 6px; }
+	.auth-submit-wrap { margin-top: 12px; }
 		.server-list { overflow: visible; padding-right: 2px; }
 	.selected-node { font-size: 10px; color: #8ea0ff; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	`
@@ -365,9 +368,11 @@ function LoginPage({ onLoginSuccess }) {
 
           {msg && <div className={msg.includes('成功') ? 'success-msg' : 'error-msg'}>{msg}</div>}
 
-          <button type="submit" className="btn" disabled={loading || (isRegister && loadingConfig)}>
+          <div className="auth-submit-wrap">
+            <button type="submit" className="btn" disabled={loading || (isRegister && loadingConfig)}>
             {loading ? '处理中...' : (isForgot ? '找回密码' : isRegister ? '注册' : '登录')}
-          </button>
+            </button>
+          </div>
         </form>
 
         <button className="btn-secondary" onClick={() => { setMode(isRegister ? 'login' : 'register'); setMsg('') }}>
