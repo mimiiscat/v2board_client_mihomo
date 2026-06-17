@@ -73,6 +73,54 @@ function getPlanDescription(plan) {
   return plan?.content || plan?.description || plan?.remark || ''
 }
 
+function sanitizeHtml(html) {
+  if (!html) return ''
+  if (typeof document === 'undefined') return String(html)
+
+  const allowedTags = new Set([
+    'A', 'B', 'BR', 'DIV', 'EM', 'I', 'LI', 'OL', 'P', 'SPAN', 'STRONG', 'SUB', 'SUP',
+    'U', 'UL', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH',
+    'BLOCKQUOTE', 'CODE', 'PRE', 'HR',
+  ])
+  const allowedAttrs = new Set(['class', 'style', 'href', 'target', 'rel', 'colspan', 'rowspan'])
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(String(html), 'text/html')
+
+  const walk = (node) => {
+    const children = Array.from(node.children || [])
+    for (const child of children) {
+      const tag = child.tagName?.toUpperCase?.() || ''
+      if (!allowedTags.has(tag)) {
+        child.replaceWith(...Array.from(child.childNodes || []))
+        continue
+      }
+
+      Array.from(child.attributes || []).forEach((attr) => {
+        const name = attr.name.toLowerCase()
+        const value = attr.value || ''
+        const isEvent = name.startsWith('on')
+        if (isEvent || !allowedAttrs.has(name)) {
+          child.removeAttribute(attr.name)
+          return
+        }
+        if (name === 'href') {
+          if (!/^(https?:|mailto:|#)/i.test(value)) child.removeAttribute(attr.name)
+          else {
+            child.setAttribute('rel', 'noreferrer noopener')
+            child.setAttribute('target', '_blank')
+          }
+        }
+      })
+
+      walk(child)
+    }
+  }
+
+  walk(doc.body)
+  return doc.body.innerHTML
+}
+
 // ─── Styles ────────────────────────────────────────────────
 const css = `
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -679,7 +727,7 @@ function Dashboard({ userInfo, onLogout }) {
             <div key={i} className="item-card">
               <div className="item-name">{p.name}</div>
               {getPlanDescription(p) && (
-                <div className="item-content">{getPlanDescription(p)}</div>
+                <div className="item-content" dangerouslySetInnerHTML={{ __html: sanitizeHtml(getPlanDescription(p)) }} />
               )}
               <div className="item-price">
                 {(() => {
