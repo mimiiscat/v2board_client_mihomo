@@ -94,8 +94,14 @@ const css = `
 /* Empty state */
 	.empty { text-align: center; padding: 24px 0; color: #666; font-size: 12px; }
 	.logo-icon { font-size: 36px; text-align: center; margin-bottom: 6px; }
-	.page-title { text-align: center; font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px; }
-	.page-sub { text-align: center; font-size: 11px; color: #888; margin-bottom: 20px; }
+.page-title { text-align: center; font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+.page-sub { text-align: center; font-size: 11px; color: #888; margin-bottom: 20px; }
+	.auth-card { position: relative; overflow: hidden; border: 1px solid rgba(102,126,234,0.18); box-shadow: 0 14px 40px rgba(0,0,0,0.22); }
+	.auth-card::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 28%); }
+	.auth-card > * { position: relative; z-index: 1; }
+	.auth-actions { display: flex; gap: 8px; margin-top: 8px; }
+	.auth-actions .btn-secondary { margin-top: 0; }
+	.auth-hint { font-size: 10px; color: #8890b8; line-height: 1.4; margin-top: 6px; }
 		.server-list { overflow: visible; padding-right: 2px; }
 	.selected-node { font-size: 10px; color: #8ea0ff; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	`
@@ -251,8 +257,7 @@ function LoginPage({ onLoginSuccess }) {
         if (result?.errors) {
           setMsg(result?.message || '找回密码失败')
         } else {
-          setMsg('密码已重置，请返回登录')
-          setMode('login')
+          setMsg('修改成功，请返回登录')
           setPassword('')
           setEmailCode('')
         }
@@ -290,7 +295,7 @@ function LoginPage({ onLoginSuccess }) {
         {isForgot ? '通过邮箱验证码找回密码' : isRegister ? (loadingConfig ? '正在检查邮箱验证配置…' : emailVerifyEnabled ? '创建新账户，需要邮箱验证码' : '创建新账户') : '登录你的账户'}
       </div>
 
-      <div className="card">
+      <div className="card auth-card">
         <form onSubmit={handleSubmit}>
           <label className="label">邮箱</label>
           <input className="input" type="email" placeholder="your@email.com" value={email}
@@ -322,6 +327,9 @@ function LoginPage({ onLoginSuccess }) {
                   {loadingCode ? '发送中...' : '发送验证码'}
                 </button>
               </div>
+              <div className="auth-hint">
+                {isForgot ? '验证码将发送到你的邮箱，用于重置密码。' : emailVerifyEnabled ? '后端已开启邮箱验证，注册时必须先发送验证码。' : '后端未开启邮箱验证，注册不需要验证码。'}
+              </div>
             </>
           )}
 
@@ -344,17 +352,18 @@ function LoginPage({ onLoginSuccess }) {
           {isRegister ? '已有账户？返回登录' : '没有账户？注册'}
         </button>
 
-        {!isForgot && (
-          <button className="btn-secondary" onClick={() => { setMode('forgot'); setMsg('') }}>
-            忘记密码？
-          </button>
-        )}
-
-        {isForgot && (
-          <button className="btn-secondary" onClick={() => { setMode('login'); setMsg('') }}>
-            返回登录
-          </button>
-        )}
+        <div className="auth-actions">
+          {!isForgot && (
+            <button className="btn-secondary" onClick={() => { setMode('forgot'); setMsg('') }}>
+              忘记密码？
+            </button>
+          )}
+          {isForgot && (
+            <button className="btn-secondary" onClick={() => { setMode('login'); setMsg('') }}>
+              返回登录
+            </button>
+          )}
+        </div>
 
       </div>
     </div>
