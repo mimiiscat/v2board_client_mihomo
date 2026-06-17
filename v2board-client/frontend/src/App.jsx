@@ -1,0 +1,492 @@
+import { useState, useEffect } from 'react'
+
+// ─── Electron IPC Bridge ───────────────────────────────────
+function getElectron() {
+  return window.electronAPI || window.__ELECTRON__ || {}
+}
+
+// ─── Utility ───────────────────────────────────────────────
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+// ─── Styles ────────────────────────────────────────────────
+const css = `
+* { margin: 0; padding: 0; box-sizing: border-box; }
+	body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; background: #0a0a1a; color: #e0e0e0; overflow: hidden; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+
+	.app { width: 400px; height: 100vh; min-height: 0; background: linear-gradient(180deg, #0f0c29 0%, #1a1a3e 50%, #24243e 100%); display: flex; flex-direction: column; overflow: hidden; }
+.drag-bar { height: 28px; -webkit-app-region: drag; flex-shrink: 0; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; height: 36px; -webkit-app-region: no-drag; flex-shrink: 0; }
+.header-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.9); }
+.close-btn { width: 24px; height: 24px; border: none; border-radius: 4px; background: rgba(255,255,255,0.06); color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; -webkit-app-region: no-drag; }
+.close-btn:hover { background: rgba(255,107,107,0.2); color: #ff6b6b; }
+	.content { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 16px; -webkit-app-region: no-drag; }
+
+.card { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.06); }
+.input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: #e0e0e0; font-size: 13px; outline: none; transition: border-color 0.2s; }
+.input:focus { border-color: rgba(102,126,234,0.5); }
+.input::placeholder { color: rgba(255,255,255,0.25); }
+.label { font-size: 11px; color: #777; margin-bottom: 6px; display: block; }
+.btn { width: 100%; padding: 11px 0; border-radius: 10px; border: none; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.2s, transform 0.1s; }
+.btn:hover { opacity: 0.9; }
+.btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary { width: 100%; padding: 9px 0; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #aaa; font-size: 12px; cursor: pointer; margin-top: 8px; transition: all 0.2s; }
+.btn-secondary:hover { border-color: rgba(255,255,255,0.2); color: #ddd; }
+.btn-small { padding: 6px 14px; border-radius: 6px; border: none; background: rgba(102,126,234,0.2); color: #667eea; font-size: 12px; cursor: pointer; font-weight: 500; transition: background 0.2s; }
+.btn-small:hover { background: rgba(102,126,234,0.3); }
+
+.error-msg { color: #ff6b6b; font-size: 11px; margin-top: -4px; margin-bottom: 6px; }
+.success-msg { color: #51cf66; font-size: 11px; margin-top: -4px; margin-bottom: 6px; }
+
+/* Toggle */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; }
+.toggle-label { font-size: 14px; font-weight: 600; color: #fff; }
+.toggle-sub { font-size: 11px; color: #888; margin-top: 2px; }
+.toggle-switch { width: 48px; height: 28px; border-radius: 14px; border: none; cursor: pointer; position: relative; transition: background 0.3s; }
+.toggle-switch.on { background: linear-gradient(135deg, #667eea, #764ba2); }
+.toggle-switch.off { background: rgba(255,255,255,0.1); }
+.toggle-knob { width: 22px; height: 22px; border-radius: 11px; background: #fff; position: absolute; top: 3px; transition: left 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.toggle-switch.on .toggle-knob { left: 23px; }
+.toggle-switch.off .toggle-knob { left: 3px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 3px; margin-bottom: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; padding: 3px; }
+.tab { flex: 1; padding: 7px 0; border-radius: 6px; border: none; background: transparent; color: #666; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.2s; text-align: center; }
+.tab.active { background: rgba(102,126,234,0.25); color: #fff; }
+
+/* Stats */
+.stats-row { display: flex; justify-content: space-around; padding: 4px 0; }
+.stat-item { text-align: center; }
+.stat-value { font-size: 16px; font-weight: 700; }
+.stat-label { font-size: 10px; color: #888; margin-top: 2px; }
+.progress-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 8px; }
+.progress-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+
+/* Item cards */
+	.item-card { background: rgba(255,255,255,0.03); border-radius: 8px; padding: 12px; margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.04); }
+	.item-card.selectable { cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+	.item-card.selectable:hover { border-color: rgba(102,126,234,0.35); background: rgba(102,126,234,0.08); }
+	.item-card.selected { border-color: rgba(102,126,234,0.75); background: rgba(102,126,234,0.16); }
+.item-name { font-size: 13px; font-weight: 600; color: #fff; }
+.item-desc { font-size: 11px; color: #888; margin-top: 3px; }
+.item-price { font-size: 15px; font-weight: 700; color: #667eea; margin-top: 4px; }
+
+/* Settings modal */
+.settings-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.settings-panel { background: #1a1a3e; border-radius: 16px; padding: 20px; width: 340px; border: 1px solid rgba(255,255,255,0.1); }
+.settings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.settings-title { font-size: 14px; font-weight: 600; color: #fff; }
+
+/* User bar */
+.user-bar { display: flex; align-items: center; gap: 12px; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.user-email { font-size: 13px; font-weight: 600; color: #fff; }
+.user-meta { font-size: 10px; color: #888; margin-top: 1px; }
+
+/* Empty state */
+	.empty { text-align: center; padding: 24px 0; color: #666; font-size: 12px; }
+	.logo-icon { font-size: 36px; text-align: center; margin-bottom: 6px; }
+	.page-title { text-align: center; font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+	.page-sub { text-align: center; font-size: 11px; color: #888; margin-bottom: 20px; }
+		.server-list { overflow: visible; padding-right: 2px; }
+	.selected-node { font-size: 10px; color: #8ea0ff; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	`
+
+function App() {
+  return (
+    <>
+      <style>{css}</style>
+      <AppContent />
+    </>
+  )
+}
+
+function AppContent() {
+  const [userInfo, setUserInfo] = useState(null)
+  
+  useEffect(() => {
+    const restoreSession = async () => {
+      const status = await getElectron().getStatus?.()
+      if (!status?.hasToken) {
+        localStorage.removeItem('v2board_token')
+        localStorage.removeItem('v2board_auth')
+        localStorage.removeItem('v2board_user')
+        return
+      }
+
+      const u = localStorage.getItem('v2board_user')
+      if (u) setUserInfo(JSON.parse(u))
+    }
+
+    restoreSession()
+  }, [])
+
+  const handleLoginSuccess = async (loginData) => {
+    localStorage.setItem('v2board_token', loginData.token)
+    localStorage.setItem('v2board_auth', loginData.auth_data)
+
+    const electron = getElectron()
+    const res = await electron.fetchUserInfo()
+    if (res?.data) {
+      setUserInfo(res)
+      localStorage.setItem('v2board_user', JSON.stringify(res))
+    }
+  }
+
+  const handleLogout = async () => {
+    await getElectron().logout?.()
+    localStorage.removeItem('v2board_token')
+    localStorage.removeItem('v2board_auth')
+    localStorage.removeItem('v2board_user')
+    setUserInfo(null)
+  }
+
+  return (
+    <div className="app">
+      <div className="drag-bar" />
+      <div className="header">
+        <span className="header-title">v2Board · Mihomo</span>
+        <button className="close-btn" onClick={() => getElectron().quit?.()}>✕</button>
+      </div>
+      <div className="content">
+        {!userInfo ? (
+          <LoginPage onLoginSuccess={handleLoginSuccess} />
+        ) : (
+          <Dashboard userInfo={userInfo} onLogout={handleLogout} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Login Page ────────────────────────────────────────────
+function LoginPage({ onLoginSuccess }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
+  const [isRegister, setIsRegister] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    setMsg('')
+    try {
+      let result
+      const electron = getElectron()
+      if (isRegister) {
+        result = await electron.register(email, password, '', inviteCode)
+      } else {
+        result = await electron.login(email, password)
+      }
+      if (result?.success) {
+        await onLoginSuccess(result.data)
+      } else {
+        setMsg(result?.error || '操作失败')
+      }
+    } catch (err) {
+      setMsg('网络错误: ' + err.message)
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div>
+      <div className="logo-icon">🌐</div>
+      <div className="page-title">v2Board 客户端</div>
+      <div className="page-sub">{isRegister ? '创建新账户' : '登录你的账户'}</div>
+
+      <div className="card">
+        <form onSubmit={handleSubmit}>
+
+
+          <label className="label">邮箱</label>
+          <input className="input" type="email" placeholder="your@email.com" value={email}
+            onChange={(e) => setEmail(e.target.value)} required />
+
+          <label className="label">密码</label>
+          <input className="input" type="password" placeholder="••••••••" value={password}
+            onChange={(e) => setPassword(e.target.value)} required />
+
+          {isRegister && (
+            <>
+              <label className="label">邀请码（可选）</label>
+              <input className="input" placeholder="邀请码" value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)} />
+            </>
+          )}
+
+          {msg && <div className={msg.includes('成功') ? 'success-msg' : 'error-msg'}>{msg}</div>}
+
+          <button type="submit" className="btn" disabled={loading}>
+            {loading ? '处理中...' : (isRegister ? '注册' : '登录')}
+          </button>
+        </form>
+
+        <button className="btn-secondary" onClick={() => { setIsRegister(!isRegister); setMsg('') }}>
+          {isRegister ? '已有账户？返回登录' : '没有账户？注册'}
+        </button>
+
+      </div>
+    </div>
+  )
+}
+
+// ─── Dashboard ─────────────────────────────────────────────
+function Dashboard({ userInfo, onLogout }) {
+  const [activeTab, setActiveTab] = useState('overview')
+  const [proxyOn, setProxyOn] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [plans, setPlans] = useState([])
+		  const [servers, setServers] = useState([])
+		  const [selectedServer, setSelectedServer] = useState('')
+		  const [activeServer, setActiveServer] = useState('')
+		  const [traffic, setTraffic] = useState({ up: 0, down: 0, uploadTotal: 0, downloadTotal: 0 })
+		  const [subData, setSubData] = useState(null)
+	  const [msg, setMsg] = useState('')
+
+  const data = userInfo?.data
+
+	  useEffect(() => {
+	    const electron = getElectron()
+		    electron.getStatus().then((s) => {
+		      setProxyOn(s?.proxyOn || false)
+		      setSelectedServer(s?.selectedProxyName || '')
+		      setActiveServer(s?.activeProxyName || '')
+		      if (s?.traffic) setTraffic(s.traffic)
+		    })
+		  }, [])
+
+	  useEffect(() => {
+	    const electron = getElectron()
+	    electron.onProxyStatus?.((status) => {
+	      if (status) {
+	        setProxyOn(status.on || false)
+	        if (status.selectedProxyName) setSelectedServer(status.selectedProxyName)
+	        setActiveServer(status.activeProxyName || '')
+	      }
+	    })
+	  }, [])
+
+	  useEffect(() => {
+	    const electron = getElectron()
+	    electron.onTraffic?.((nextTraffic) => {
+	      if (nextTraffic) setTraffic(nextTraffic)
+	    })
+	  }, [])
+
+	  const handleToggle = async () => {
+	    setMsg('')
+	    setLoading(true)
+	    try {
+	      const electron = getElectron()
+	      const result = await electron.toggleProxy()
+	      setProxyOn(result?.on || false)
+	      if (result?.selectedProxyName) setSelectedServer(result.selectedProxyName)
+	      setActiveServer(result?.activeProxyName || '')
+	    } catch {}
+	    setLoading(false)
+	  }
+
+	  const handleRefresh = async (action, setter) => {
+	    try {
+	      const electron = getElectron()
+	      const res = await electron[action]()
+	      if (res?.data) {
+	        setter(res.data)
+	        if (action === 'fetchServers' && Array.isArray(res.data) && res.data.length && !selectedServer) {
+	          const first = res.data.find(s => s?.name)?.name || ''
+	          if (first) {
+	            setSelectedServer(first)
+	            await electron.setSelectedServer?.(first)
+	          }
+	        }
+	      }
+	    } catch {}
+	  }
+
+	  const handleSelectServer = async (server) => {
+	    if (!server?.name) return
+	    setMsg('')
+	    setSelectedServer(server.name)
+	    const result = await getElectron().setSelectedServer?.(server.name)
+	    if (result?.proxyOn !== undefined) setProxyOn(result.proxyOn)
+	    setActiveServer(result?.activeProxyName || '')
+	    if (result?.proxyOn && result?.switched === false) setMsg('节点已保存，但 Mihomo 暂时没有切换成功，请重新开启代理')
+	  }
+
+	  const trafficUsed = data ? (data.u || 0) + (data.d || 0) : 0
+	  const trafficTotal = data ? (data.transfer_enable || 0) : 0
+	  const percent = trafficTotal > 0 ? Math.round((trafficUsed / trafficTotal) * 100) : 0
+	  const sessionTraffic = (traffic.uploadTotal || 0) + (traffic.downloadTotal || 0)
+	  const expiredAt = data?.expired_at ? new Date(data.expired_at * 1000).toLocaleDateString('zh-CN') : '—'
+
+  const tabs = [
+    { key: 'overview', label: '概览' },
+    { key: 'plans', label: '套餐' },
+    { key: 'servers', label: '节点' },
+    { key: 'subscribe', label: '订阅' },
+  ]
+
+  return (
+    <div>
+      {/* User Bar */}
+      <div className="card" style={{ padding: '12px 16px' }}>
+        <div className="user-bar">
+          <div className="avatar">{(data?.email || 'U')[0]?.toUpperCase() || '?'}</div>
+          <div style={{ flex: 1 }}>
+            <div className="user-email">{data?.email || '用户'}</div>
+            <div className="user-meta">
+              {data?.plan_id ? '📦 付费用户' : '🆓 免费用户'} · 到期: {expiredAt}
+            </div>
+          </div>
+          <button className="btn-secondary" style={{ width: 'auto', padding: '4px 10px', margin: 0, fontSize: 11 }} onClick={onLogout}>退出</button>
+        </div>
+      </div>
+
+      {/* Proxy Toggle */}
+      <div className="card toggle-row">
+	          <div>
+	            <div className="toggle-label">{proxyOn ? '🟢 代理已开启' : '🔴 代理已关闭'}</div>
+	            <div className="toggle-sub">{proxyOn ? 'mihomo 内核运行中' : '点击开关启动'}</div>
+	            {selectedServer && <div className="selected-node">当前选择: {selectedServer}</div>}
+	            {proxyOn && activeServer && <div className="selected-node">实际生效: {activeServer}</div>}
+	          </div>
+        <button className={`toggle-switch ${proxyOn ? 'on' : 'off'}`} onClick={handleToggle} disabled={loading}>
+          <div className="toggle-knob" />
+        </button>
+      </div>
+      {msg && <div className="error-msg" style={{ marginTop: -6, marginBottom: 8 }}>{msg}</div>}
+
+      {/* Traffic */}
+      {data && (
+        <div className="card">
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#fff', marginBottom: 8 }}>📊 流量</div>
+          <div className="stats-row">
+	            <div className="stat-item">
+	              <div className="stat-value" style={{ color: '#ff6b6b' }}>{formatBytes(traffic.up || 0)}/s</div>
+	              <div className="stat-label">↑ 实时上传</div>
+	              <div className="stat-label">本次 {formatBytes(traffic.uploadTotal || 0)}</div>
+	            </div>
+	            <div className="stat-item">
+	              <div className="stat-value" style={{ color: '#51cf66' }}>{formatBytes(traffic.down || 0)}/s</div>
+	              <div className="stat-label">↓ 实时下载</div>
+	              <div className="stat-label">本次 {formatBytes(traffic.downloadTotal || 0)}</div>
+	            </div>
+            <div className="stat-item">
+              <div className="stat-value" style={{ color: '#667eea' }}>{formatBytes(trafficTotal)}</div>
+              <div className="stat-label">总量</div>
+            </div>
+          </div>
+          <div className="progress-bar">
+            <div className="progress-fill" style={{
+              width: `${Math.min(percent, 100)}%`,
+              background: percent > 90 ? '#ff6b6b' : 'linear-gradient(90deg, #667eea, #764ba2)',
+            }} />
+          </div>
+	          <div style={{ fontSize: 11, color: '#888', marginTop: 6, textAlign: 'center' }}>
+	            套餐已用 {percent}% · 本次代理 {formatBytes(sessionTraffic)}
+	          </div>
+	        </div>
+	      )}
+
+      {/* Tabs */}
+      <div className="tabs">
+        {tabs.map(t => (
+          <button key={t.key} className={`tab ${activeTab === t.key ? 'active' : ''}`}
+            onClick={() => setActiveTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* Tab: Overview */}
+      {activeTab === 'overview' && (
+        <div className="card">
+          {data && (
+            <div style={{ fontSize: 12, color: '#aaa' }}>
+              {[
+                ['设备限制', data.device_limit ?? '不限'],
+                ['账户余额', `¥${data.balance || 0}`],
+                ['佣金余额', `¥${data.commission_balance || 0}`],
+                ['计划ID', data.plan_id || '无'],
+                ['UUID', (data.uuid || '').slice(0, 12) + '...'],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <span style={{ color: '#888' }}>{k}</span><span style={{ color: '#ccc' }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Plans */}
+      {activeTab === 'plans' && (
+        <div className="card">
+          <button className="btn-small" style={{ marginBottom: 12 }} onClick={() => handleRefresh('fetchPlans', setPlans)}>🔄 刷新</button>
+          {plans.length > 0 ? plans.map((p, i) => (
+            <div key={i} className="item-card">
+              <div className="item-name">{p.name}</div>
+              <div className="item-price">¥{p.price} <span style={{ fontSize: 11, color: '#888' }}>/{p.period?.[0] || '月'}</span></div>
+              <div className="item-desc">{formatBytes(p.transfer_enable)}</div>
+            </div>
+          )) : <div className="empty">暂无套餐</div>}
+        </div>
+      )}
+
+      {/* Tab: Servers */}
+	      {activeTab === 'servers' && (
+	        <div className="card">
+	          <button className="btn-small" style={{ marginBottom: 12 }} onClick={() => handleRefresh('fetchServers', setServers)}>🔄 刷新</button>
+	          {servers.length > 0 ? (
+	            <div className="server-list">
+	              {servers.map((s, i) => (
+	                <div
+	                  key={s.id || `${s.name}-${i}`}
+	                  className={`item-card selectable ${selectedServer === s.name ? 'selected' : ''}`}
+	                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+	                  onClick={() => handleSelectServer(s)}
+	                >
+	                  <div style={{ minWidth: 0 }}>
+	                    <div className="item-name">{s.name || `节点 ${i + 1}`}</div>
+	                    <div className="item-desc">{s.host || s.type || ''}</div>
+	                  </div>
+	                  <div style={{ fontSize: 11, color: selectedServer === s.name ? '#8ea0ff' : '#51cf66', marginLeft: 8 }}>
+	                    {selectedServer === s.name ? '已选' : '●'}
+	                  </div>
+	                </div>
+	              ))}
+	            </div>
+	          ) : <div className="empty">暂无节点</div>}
+	        </div>
+	      )}
+
+      {/* Tab: Subscribe */}
+      {activeTab === 'subscribe' && (
+        <div className="card">
+          <button className="btn-small" style={{ marginBottom: 12 }} onClick={() => handleRefresh('fetchSubscribe', setSubData)}>🔄 刷新</button>
+          {subData?.subscribe_url ? (
+            <div>
+              <label className="label">订阅链接</label>
+              <div style={{
+                fontSize: 10, color: '#667eea', wordBreak: 'break-all',
+                background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 6,
+                fontFamily: 'monospace', lineHeight: 1.5,
+              }}>{subData.subscribe_url}</div>
+            </div>
+          ) : <div className="empty">暂无订阅</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default App

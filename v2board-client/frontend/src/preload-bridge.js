@@ -1,0 +1,65 @@
+// Electron IPC bridge for renderer process
+// When running in Electron, these map to the main process handlers
+window.electronAPI = {
+  login: (email, password) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.login(email, password)
+    return Promise.resolve({ success: false, error: 'Not in Electron' })
+  },
+  register: (email, password, emailCode, inviteCode) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.register(email, password, emailCode, inviteCode)
+    return Promise.resolve({ success: false, error: 'Not in Electron' })
+  },
+  fetchUserInfo: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.fetchUserInfo()
+    return Promise.resolve(null)
+  },
+  fetchSubscribe: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.fetchSubscribe()
+    return Promise.resolve(null)
+  },
+  fetchPlans: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.fetchPlans()
+    return Promise.resolve(null)
+  },
+  fetchServers: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.fetchServers()
+    return Promise.resolve(null)
+  },
+  fetchStat: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.fetchStat()
+    return Promise.resolve(null)
+  },
+  toggleProxy: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.toggleProxy()
+    return Promise.resolve({ on: false })
+  },
+  setSelectedServer: (name) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.setSelectedServer(name)
+    return Promise.resolve({ success: false })
+  },
+  setServer: (url) => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.setServer(url)
+    return Promise.resolve({ success: false })
+  },
+  getStatus: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.getStatus()
+    return Promise.resolve({ proxyOn: false })
+  },
+  onProxyStatus: (cb) => {
+    if (window.__ELECTRON__) {
+      window.__ELECTRON__.onProxyStatus(cb)
+    }
+  },
+  onTraffic: (cb) => {
+    if (window.__ELECTRON__) {
+      window.__ELECTRON__.onTraffic(cb)
+    }
+  },
+  logout: () => {
+    if (window.__ELECTRON__) return window.__ELECTRON__.logout()
+    return Promise.resolve({ success: true })
+  },
+  quit: () => {
+    if (window.__ELECTRON__) window.__ELECTRON__.quit()
+  },
+}

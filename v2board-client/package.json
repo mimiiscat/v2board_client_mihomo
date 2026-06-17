@@ -1,0 +1,80 @@
+{
+  "name": "v2board-client",
+  "version": "1.0.0",
+  "main": "src/main.js",
+  "author": "v2board",
+  "license": "MIT",
+  "description": "v2Board Mihomo Desktop Client",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"cd frontend && npm run dev\" \"wait-on http://localhost:9000 && electron .\"",
+    "build:frontend": "cd frontend && npm run build",
+    "build": "npm run build:frontend && electron-builder",
+    "dist:mac": "TARGET=darwin npx electron-builder build --mac",
+    "dist:win": "TARGET=win32 npx electron-builder build --win"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "js-yaml": "^4.1.0",
+    "kill-port": "^2.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^33.4.11",
+    "electron-builder": "^24.9.1",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.v2board.client",
+    "productName": "v2Board",
+    "copyright": "Copyright © 2025",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "extraResources": [
+      {
+        "from": "libs/${env.TARGET_ARCH_DIR}",
+        "to": "libs/${env.TARGET_ARCH_DIR}"
+      },
+      {
+        "from": "libs/geo",
+        "to": "libs/geo"
+      }
+    ],
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "res/icon.icns",
+      "category": "public.category.internet"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 410,
+          "y": 150,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 130,
+          "y": 150,
+          "type": "file"
+        }
+      ]
+    },
+    "win": {
+      "icon": "res/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
