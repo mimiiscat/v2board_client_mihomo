@@ -23,17 +23,13 @@ let mihomoConfigPath = ''
 let selectedProxyName = ''
 const DEFAULT_MIXED_PORT = 7897
 const DEFAULT_DELAY_TEST_URL = 'https://cp.cloudflare.com/generate_204'
-const FALLBACK_DELAY_TEST_URLS = [
-  'https://cp.cloudflare.com/generate_204',
-  'https://www.google.com/generate_204',
-  'http://www.gstatic.com/generate_204',
-]
 let activeMixedPort = DEFAULT_MIXED_PORT
 let activeControllerPort = 0
 let trafficRequest = null
 let trafficState = { up: 0, down: 0, uploadTotal: 0, downloadTotal: 0 }
 let activeProxyName = ''
 let isDelayTestSession = false
+let startMihomoPromise = null
 let refreshTrayMenu = () => {}
 const MAIN_PROXY_GROUP = '🚀 节点选择'
 const FALLBACK_PROXY_GROUP = '🐟 漏网之鱼'
@@ -210,71 +206,24 @@ function appendQuery(url, params) {
   }
 }
 
-function sendServerLatencyUpdate(key, latency) {
-  win?.webContents.send('server-latency-update', { key, latency })
+function sendServerLatencyUpdate(key, latency, runId = null) {
+  win?.webContents.send('server-latency-update', { key, latency, runId })
 }
 
-function measureTcpLatency(host, port, timeout = 3000) {
-  return new Promise((resolve) => {
-    if (!host || !port) {
-      resolve(null)
-      return
-    }
-
-    const startedAt = Date.now()
-    const socket = new net.Socket()
-    let settled = false
-
-    const finish = (value) => {
-      if (settled) return
-      settled = true
-      try { socket.destroy() } catch (_) {}
-      resolve(value)
-    }
-
-    socket.setTimeout(timeout)
-    socket.once('connect', () => finish(Date.now() - startedAt))
-    socket.once('timeout', () => finish(null))
-    socket.once('error', () => finish(null))
-
-    try {
-      socket.connect(Number(port), host)
-    } catch (_) {
-      finish(null)
-    }
-  })
-}
-
-async function measureServerLatencies(targets, timeout = 3000) {
-  const list = Array.isArray(targets) ? targets.filter(Boolean) : []
-  const result = {}
-  const concurrency = 6
-  let index = 0
-
-  async function worker() {
-    while (index < list.length) {
-      const current = list[index++]
-      const key = String(current?.key || '').trim()
-      const candidates = Array.isArray(current?.candidates) ? current.candidates : []
-      if (!key || !candidates.length) continue
-
-      let latency = null
-      for (const candidate of candidates) {
-        const host = String(candidate?.host || '').trim()
-        const port = Number(candidate?.port || 0)
-        if (!host || !port) continue
-        latency = await measureTcpLatency(host, port, timeout)
-        if (Number.isFinite(latency) && latency > 0) break
-      }
-
-      result[key] = latency
-      sendServerLatencyUpdate(key, latency)
-    }
+function getStatusSnapshot() {
+  return {
+    proxyOn: isProxyOn,
+    server: serverUrl,
+    hasToken: !!authData,
+    selectedProxyName,
+    activeProxyName,
+    mixedPort: activeMixedPort,
+    traffic: trafficState,
   }
+}
 
-  const workers = Array.from({ length: Math.min(concurrency, list.length) }, () => worker())
-  await Promise.all(workers)
-  return result
+function sendStatusSnapshot() {
+  win?.webContents.send('status-snapshot', getStatusSnapshot())
 }
 
 function readCachedSubscription() {
@@ -392,11 +341,19 @@ function boolFromInt(value) {
   return value === true || value === 1 || value === '1'
 }
 
+function getServerProtocol(server) {
+  const rawType = String(server?.type || server?.protocol || '').trim().toLowerCase()
+  const version = Number(server?.version || server?.protocol_version || 0)
+  if (rawType === 'hysteria2' || rawType === 'hy2') return 'hysteria2'
+  if (rawType === 'hysteria' && version === 2) return 'hysteria2'
+  return rawType
+}
+
 function serverToProxy(server, userUuid) {
   const port = Number(server.server_port || server.port)
   if (!server?.name || !server?.host || !port) return null
 
-  if (server.type === 'hysteria' && Number(server.version) === 2) {
+  if (getServerProtocol(server) === 'hysteria2') {
     const proxy = {
       name: server.name,
       type: 'hysteria2',
@@ -505,8 +462,9 @@ async function reloadMihomoConfiguration() {
 
 function writeMihomoConfig(config) {
   if (!mihomoConfigPath) {
-    const libsPath = getLibsPath()
-    mihomoConfigPath = path.join(libsPath, 'config.yaml')
+    const runtimeConfigDir = path.join(app.getPath('userData'), 'mihomo-runtime')
+    fs.mkdirSync(runtimeConfigDir, { recursive: true })
+    mihomoConfigPath = path.join(runtimeConfigDir, `config-${process.pid}.yaml`)
   }
   const yaml = YAML.dump(config, { lineWidth: -1, noRefs: true })
   fs.writeFileSync(mihomoConfigPath, yaml)
@@ -515,7 +473,6 @@ function writeMihomoConfig(config) {
 
 function resetTrafficState() {
   trafficState = { up: 0, down: 0, uploadTotal: 0, downloadTotal: 0 }
-  win?.webContents.send('traffic-update', trafficState)
 }
 
 function stopTrafficStream() {
@@ -528,6 +485,7 @@ function stopTrafficStream() {
 function startTrafficStream() {
   stopTrafficStream()
   resetTrafficState()
+  sendStatusSnapshot()
   if (!activeControllerPort) return
 
   const req = http.get(`http://127.0.0.1:${activeControllerPort}/traffic`, (res) => {
@@ -549,7 +507,7 @@ function startTrafficStream() {
             uploadTotal: trafficState.uploadTotal + up,
             downloadTotal: trafficState.downloadTotal + down,
           }
-          win?.webContents.send('traffic-update', trafficState)
+          sendStatusSnapshot()
         } catch (_) {}
       }
     })
@@ -678,68 +636,68 @@ async function measureDelayThroughMixedPort(testUrl, timeout = 5000) {
 }
 
 async function fetchMihomoProxyDelay(name, testUrl = DEFAULT_DELAY_TEST_URL, timeout = 5000) {
-  if (!name || !isProxyOn) return null
+  if (!name || !(isProxyOn || isDelayTestSession)) return { latency: null, status: 'error' }
   try {
-    const urls = Array.isArray(testUrl)
-      ? testUrl.filter(Boolean)
-      : [testUrl, ...FALLBACK_DELAY_TEST_URLS].filter(Boolean)
-    const uniqueUrls = [...new Set(urls)]
-
-    for (const currentUrl of uniqueUrls) {
-      const delay = await measureDelayThroughMixedPort(currentUrl, timeout)
-      if (Number.isFinite(delay) && delay > 0) return delay
-    }
-
-    return null
+    const currentUrl = Array.isArray(testUrl) ? (testUrl.find(Boolean) || DEFAULT_DELAY_TEST_URL) : (testUrl || DEFAULT_DELAY_TEST_URL)
+    const effectiveTimeout = Math.max(1000, Number(timeout) || 5000)
+    const endpoint = `/proxies/${encodeURIComponent(name)}/delay?url=${encodeURIComponent(currentUrl)}&timeout=${effectiveTimeout}`
+    const resp = await mihomoControllerRequest('GET', endpoint, null, effectiveTimeout + 1000)
+    const delay = Number(resp?.delay ?? resp?.data?.delay ?? resp?.data ?? resp)
+    if (Number.isFinite(delay) && delay > 0 && delay < effectiveTimeout) return { latency: delay, status: 'ok' }
+    return { latency: null, status: 'timeout' }
   } catch (err) {
     console.error(`[Mihomo] Delay test error for ${name}:`, err.message)
-    return null
+    return { latency: null, status: 'timeout' }
   }
 }
 
-function sendDelayUpdate(name, delay) {
-  win?.webContents.send('server-delay-update', { name, delay })
+function getServerDisplayName(server) {
+  if (typeof server === 'string') return server.trim()
+  return String(server?.name || server?.remarks || server?.ps || '').trim()
 }
 
-async function fetchMihomoProxyDelays(names, testUrl = DEFAULT_DELAY_TEST_URL, timeout = 5000, activateBeforeTest = false) {
-  const list = Array.isArray(names) ? names.filter(Boolean) : []
+async function fetchMihomoProxyDelays(servers, testUrl = DEFAULT_DELAY_TEST_URL, timeout = 5000, activateBeforeTest = false, runId = null) {
+  const list = Array.isArray(servers) ? servers.filter(Boolean) : []
   if (!list.length) return {}
   const result = {}
   let startedTempSession = false
+  let proxyByName = new Map()
+
+  try {
+    const proxies = await fetchServerProxies()
+    proxyByName = new Map(proxies.map(proxy => [getServerDisplayName(proxy), proxy]).filter(([name]) => name))
+  } catch (err) {
+    console.error('[Mihomo] Build latency proxy map failed:', err.message)
+  }
+
+  const measurableList = list.map((item) => {
+    const name = getServerDisplayName(item)
+    return proxyByName.get(name) || item
+  })
 
   if (activateBeforeTest && !isProxyOn && !isDelayTestSession) {
     startedTempSession = await startDelayTestMihomo()
-  }
-
-  if (activateBeforeTest && (isProxyOn || isDelayTestSession)) {
-    const originalSelected = await getMihomoSelectedProxy()
-    try {
-      for (const current of list) {
-        await selectMihomoProxy(current)
-        await new Promise(resolve => setTimeout(resolve, 600))
-        result[current] = await fetchMihomoProxyDelay(current, testUrl, timeout)
-        sendDelayUpdate(current, result[current])
+    if (!startedTempSession) {
+      for (const item of measurableList) {
+        const name = getServerDisplayName(item)
+        if (name) sendServerLatencyUpdate(name, { latency: null, status: 'error' }, runId)
       }
-    } finally {
-      if (originalSelected && originalSelected !== (await getMihomoSelectedProxy())) {
-        await selectMihomoProxy(originalSelected)
-      }
+      return result
     }
-    if (startedTempSession) {
-      stopMihomo({ skipSystemProxy: true, emitStatus: false })
-    }
-    return result
   }
 
   const concurrency = 4
   let index = 0
 
   async function worker() {
-    while (index < list.length) {
-      const current = list[index++]
-      const delay = await fetchMihomoProxyDelay(current, testUrl, timeout)
-      result[current] = delay
-      sendDelayUpdate(current, delay)
+    while (index < measurableList.length) {
+      const current = measurableList[index++]
+      const name = getServerDisplayName(current)
+      if (!name) continue
+
+      const delay = await fetchMihomoProxyDelay(name, testUrl, timeout)
+      result[name] = delay
+      sendServerLatencyUpdate(name, delay, runId)
     }
   }
 
@@ -864,6 +822,15 @@ async function setSystemProxy(enabled) {
 
 
 async function startMihomo(options = {}) {
+  if (mihomoProcess && (isProxyOn || isDelayTestSession)) return true
+  if (startMihomoPromise) return startMihomoPromise
+  startMihomoPromise = doStartMihomo(options).finally(() => {
+    startMihomoPromise = null
+  })
+  return startMihomoPromise
+}
+
+async function doStartMihomo(options = {}) {
   const { enableSystemProxy = true, emitStatus = true } = options
   const binaryPath = findMihomoBinary()
   if (!binaryPath) {
@@ -909,6 +876,7 @@ async function startMihomo(options = {}) {
     activeProxyName = ''
     updateTrayIcon()
     refreshTrayMenu()
+    sendStatusSnapshot()
   })
 
   isProxyOn = !!enableSystemProxy
@@ -918,10 +886,14 @@ async function startMihomo(options = {}) {
   if (controllerReady) {
     await selectMihomoProxy(selectedProxyName)
     if (emitStatus && enableSystemProxy) {
-      win?.webContents.send('proxy-status', { on: isProxyOn, selectedProxyName, activeProxyName })
+      sendStatusSnapshot()
     }
   } else {
     console.error('[Mihomo] Controller did not become ready')
+    if (!enableSystemProxy) {
+      stopMihomo({ skipSystemProxy: true, emitStatus: false })
+      return false
+    }
   }
 
   if (enableSystemProxy) {
@@ -931,6 +903,7 @@ async function startMihomo(options = {}) {
   }
 
   refreshTrayMenu()
+  sendStatusSnapshot()
 
   return true
 }
@@ -957,7 +930,7 @@ function stopMihomo(options = {}) {
   updateTrayIcon()
   refreshTrayMenu()
   if (emitStatus) {
-    win?.webContents.send('proxy-status', { on: false, selectedProxyName, activeProxyName })
+    sendStatusSnapshot()
   }
 }
 
@@ -1146,8 +1119,9 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       devTools: !app.isPackaged,
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
   })
 
@@ -1193,6 +1167,7 @@ function setupIPC() {
       authData = result.data.auth_data
       setConfig('v2board_token', subscribeToken)
       setConfig('v2board_auth', authData)
+      sendStatusSnapshot()
       return { success: true, data: result.data }
     }
     return { success: false, error: result?.message || '登录失败' }
@@ -1205,6 +1180,7 @@ function setupIPC() {
       authData = result.data.auth_data
       setConfig('v2board_token', subscribeToken)
       setConfig('v2board_auth', authData)
+      sendStatusSnapshot()
       return { success: true, data: result.data }
     }
     return { success: false, error: result?.message || '注册失败' }
@@ -1217,11 +1193,15 @@ function setupIPC() {
   ipcMain.handle('fetch-servers', async () => fetchServers(authData))
   ipcMain.handle('reload-servers', async () => {
     const result = await fetchServers(authData)
-    await reloadMihomoConfiguration()
-    return result
+    const reloaded = await reloadMihomoConfiguration()
+    return {
+      ...result,
+      success: !!result?.data && reloaded,
+      reloaded,
+    }
   })
-  ipcMain.handle('fetch-server-latencies', async (_, targets, timeout = 3000) => {
-    return measureServerLatencies(targets, timeout)
+  ipcMain.handle('measure-server-delays', async (_, names, testUrl = DEFAULT_DELAY_TEST_URL, timeout = 5000, runId = null) => {
+    return fetchMihomoProxyDelays(names, testUrl, timeout, true, runId)
   })
   ipcMain.handle('fetch-stat', async () => fetchStat(authData))
   ipcMain.handle('fetch-guest-config', async () => fetchGuestConfig())
@@ -1251,6 +1231,7 @@ function setupIPC() {
   ipcMain.handle('toggle-proxy', async () => {
     if (isProxyOn) { stopMihomo(); return { on: false } }
     const ok = await startMihomo()
+    sendStatusSnapshot()
     return { on: isProxyOn, selectedProxyName, activeProxyName, ok }
   })
 
@@ -1262,6 +1243,7 @@ function setupIPC() {
       if (isProxyOn) {
         switched = await selectMihomoProxy(selectedProxyName)
       }
+      sendStatusSnapshot()
     }
     return { success: true, selectedProxyName, activeProxyName, proxyOn: isProxyOn, switched }
   })
@@ -1276,13 +1258,7 @@ function setupIPC() {
   })
 
   ipcMain.handle('get-status', async () => ({
-    proxyOn: isProxyOn,
-    server: serverUrl,
-    hasToken: !!authData,
-    selectedProxyName,
-    activeProxyName,
-    mixedPort: activeMixedPort,
-    traffic: trafficState,
+    ...getStatusSnapshot(),
   }))
 
   ipcMain.handle('logout', async () => {
@@ -1290,12 +1266,8 @@ function setupIPC() {
     authData = ''
     setConfig('v2board_token', '')
     setConfig('v2board_auth', '')
+    sendStatusSnapshot()
     return { success: true }
-  })
-
-  // Events (renderer -> main)
-  ipcMain.on('proxy-action', () => {
-    win?.webContents.send('proxy-status', { on: isProxyOn })
   })
 
   // Navigation
@@ -1310,15 +1282,16 @@ function init() {
   serverUrl = getConfig('serverUrl', runtimeConfig.backend_api_url || serverUrl)
 
   const savedToken = getConfig('v2board_token', '')
-  if (savedToken) subscribeToken = savedToken
-  const savedAuth = getConfig('v2board_auth', '')
-  if (savedAuth) authData = savedAuth
-  selectedProxyName = getConfig('selectedProxyName', '')
+    if (savedToken) subscribeToken = savedToken
+    const savedAuth = getConfig('v2board_auth', '')
+    if (savedAuth) authData = savedAuth
+    selectedProxyName = getConfig('selectedProxyName', '')
 
-  createWindow()
-  createTray()
-  setupIPC()
-}
+    createWindow()
+    createTray()
+    setupIPC()
+    sendStatusSnapshot()
+  }
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()

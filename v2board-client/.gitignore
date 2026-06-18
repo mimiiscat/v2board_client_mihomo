@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+frontend/node_modules/
+dist-electron/
+src/dist/
+build/
+libs/darwin-x64/
+libs/win32-x64/
+*.log
