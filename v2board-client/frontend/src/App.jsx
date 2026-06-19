@@ -7,6 +7,7 @@ import { Dashboard } from './components/Dashboard'
 function App() {
   const [userInfo, setUserInfo] = useState(null)
   const [appConfig, setAppConfig] = useState(null)
+  const [updateInfo, setUpdateInfo] = useState(null)
   const [windowMaximized, setWindowMaximized] = useState(false)
 
   useEffect(() => {
@@ -16,6 +17,15 @@ function App() {
         if (cfg && typeof cfg === 'object') setAppConfig(cfg)
       } catch (err) {
         console.error('[App] loadConfig failed:', err?.message || err)
+      }
+    }
+
+    const loadUpdateInfo = async () => {
+      try {
+        const info = await getElectron().getUpdateInfo?.()
+        if (info && typeof info === 'object') setUpdateInfo(info)
+      } catch (err) {
+        console.error('[App] loadUpdateInfo failed:', err?.message || err)
       }
     }
 
@@ -35,6 +45,7 @@ function App() {
     }
 
     loadConfig()
+    loadUpdateInfo()
     restoreSession()
 
     const syncWindowState = async () => {
@@ -47,6 +58,14 @@ function App() {
     }
 
     syncWindowState()
+
+    const electron = getElectron()
+    const unsubscribeUpdate = electron.onUpdateInfo?.((info) => {
+      if (info && typeof info === 'object') setUpdateInfo(info)
+    })
+    return () => {
+      if (typeof unsubscribeUpdate === 'function') unsubscribeUpdate()
+    }
   }, [])
 
   useEffect(() => {
@@ -106,11 +125,31 @@ function App() {
           {appConfig?.window_title || `${appConfig?.app_name || 'v2Board'} · ${appConfig?.client_name || 'Mihomo'}`}
         </div>
       </div>
+      {updateInfo?.available && (
+        <div className="update-banner">
+          <div className="update-banner-copy">
+            <div className="update-banner-title">发现新版本</div>
+            <div className="update-banner-sub">
+              当前 {updateInfo.localVersion || '未知'}，最新 {updateInfo.latestVersion || '未知'}
+            </div>
+            {updateInfo.releaseNotes && <div className="update-banner-note">{updateInfo.releaseNotes}</div>}
+          </div>
+          <button
+            className="update-banner-btn"
+            onClick={() => {
+              const url = updateInfo.downloadUrl || updateInfo.releaseUrl || updateInfo.manifestUrl
+              if (url) getElectron().openExternal?.(url)
+            }}
+          >
+            立即更新
+          </button>
+        </div>
+      )}
       <div className="content">
         {!userInfo ? (
           <AuthPage appConfig={appConfig} onLoginSuccess={handleLoginSuccess} />
         ) : (
-          <Dashboard userInfo={userInfo} appConfig={appConfig} onLogout={handleLogout} />
+          <Dashboard userInfo={userInfo} onLogout={handleLogout} />
         )}
       </div>
     </div>

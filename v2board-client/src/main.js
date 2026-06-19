@@ -10,13 +10,15 @@ const YAML = require('js-yaml')
 const { shell, clipboard } = require('electron')
 const { getArchDir: getPlatformArchDir, getMihomoBinaryCandidates } = require('./platform')
 const APP_CONFIG_PATH = path.join(__dirname, '..', 'app.config.json')
+const PACKAGE_VERSION = require('../package.json').version
 
 let win = null
 let tray = null
 let frontendServer = null
 let mihomoProcess = null
 let isProxyOn = false
-let serverUrl = getRuntimeConfig().backend_api_url || 'https://api.dudog.club'
+let runtimeConfig = readAppConfig()
+let serverUrl = ''
 let subscribeToken = ''
 let authData = ''
 let mihomoBinPath = ''
@@ -35,6 +37,17 @@ let activeProxyName = ''
 let isDelayTestSession = false
 let startMihomoPromise = null
 let refreshTrayMenu = () => {}
+let updateInfo = {
+  checked: false,
+  available: false,
+  localVersion: '',
+  latestVersion: '',
+  downloadUrl: '',
+  releaseUrl: '',
+  releaseNotes: '',
+  manifestUrl: '',
+  backendApiUrl: '',
+}
 const MAIN_PROXY_GROUP = '🚀 节点选择'
 const FALLBACK_PROXY_GROUP = '🐟 漏网之鱼'
 const LATENCY_TEST_URL_KEY = 'defaultLatencyTest'
@@ -51,18 +64,172 @@ function readAppConfig() {
   return {
     app_name: 'v2Board',
     client_name: 'Mihomo',
-    app_version: '1.0.0',
+    app_version: '1.0.2',
     app_id: 'com.v2board.client',
     product_name: 'v2Board',
     window_title: 'v2Board · Mihomo',
     page_title: 'v2Board 客户端',
     tray_tooltip: 'v2Board Client',
-    backend_api_url: 'https://api.dudog.club',
+    remote_config_url: '',
   }
 }
 
 function getRuntimeConfig() {
-  return readAppConfig()
+  return runtimeConfig
+}
+
+function getAppVersion() {
+  return String(runtimeConfig?.app_version || PACKAGE_VERSION || '0.0.0').trim()
+}
+
+function normalizeBackendUrl(url) {
+  if (typeof url !== 'string') return ''
+  return url.trim().replace(/\/+$/, '')
+}
+
+function getRemoteConfigCachePath() {
+  return path.join(app.getPath('userData'), 'remote-config-cache.json')
+}
+
+function readCachedRemoteConfig() {
+  try {
+    const cachePath = getRemoteConfigCachePath()
+    if (!fs.existsSync(cachePath)) return null
+    const raw = fs.readFileSync(cachePath, 'utf-8')
+    if (!raw.trim()) return null
+    return JSON.parse(raw)
+  } catch (err) {
+    console.error('[RemoteConfig] Read cache error:', err.message)
+    return null
+  }
+}
+
+function writeCachedRemoteConfig(payload) {
+  try {
+    const cachePath = getRemoteConfigCachePath()
+    const cacheDir = path.dirname(cachePath)
+    fs.mkdirSync(cacheDir, { recursive: true })
+    fs.writeFileSync(cachePath, JSON.stringify(payload))
+  } catch (err) {
+    console.error('[RemoteConfig] Write cache error:', err.message)
+  }
+}
+
+function clearCachedRemoteConfig() {
+  try {
+    const cachePath = getRemoteConfigCachePath()
+    if (fs.existsSync(cachePath)) fs.unlinkSync(cachePath)
+  } catch (err) {
+    console.error('[RemoteConfig] Clear cache error:', err.message)
+  }
+}
+
+async function fetchRemoteJson(url, timeout = 8000) {
+  if (!url || !/^https?:\/\//i.test(url)) return null
+  const axios = require('axios')
+  try {
+    const resp = await axios.get(url, { timeout, responseType: 'json' })
+    return typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data
+  } catch (err) {
+    const raw = err.response?.data
+    if (typeof raw === 'string') {
+      try {
+        return JSON.parse(raw)
+      } catch (_) {}
+    }
+    console.error('[RemoteConfig] Fetch error:', err.message)
+    return null
+  }
+}
+
+function parseVersion(version) {
+  const parts = String(version || '')
+    .trim()
+    .replace(/^v/i, '')
+    .match(/\d+/g) || []
+  return parts.map(part => Number.parseInt(part, 10)).filter(Number.isFinite)
+}
+
+function compareVersions(left, right) {
+  const a = parseVersion(left)
+  const b = parseVersion(right)
+  const len = Math.max(a.length, b.length, 3)
+  for (let i = 0; i < len; i++) {
+    const av = a[i] || 0
+    const bv = b[i] || 0
+    if (av > bv) return 1
+    if (av < bv) return -1
+  }
+  return 0
+}
+
+function normalizeVersionInfo(input) {
+  const data = input && typeof input === 'object' && 'data' in input ? input.data : input
+  if (!data || typeof data !== 'object') return null
+
+  const appData = data.app && typeof data.app === 'object' ? data.app : data
+  const platformKey = process.platform === 'darwin'
+    ? 'macos'
+    : process.platform === 'win32'
+      ? 'windows'
+      : 'version'
+  const platformVersion = platformKey === 'version' ? '' : String(appData[`${platformKey}_version`] || '').trim()
+  const platformDownloadUrl = platformKey === 'version' ? '' : String(appData[`${platformKey}_download_url`] || '').trim()
+  const latestVersion = platformVersion || String(data.version || data.latest_version || data.latestVersion || data.app_version || '').trim()
+  const downloadUrl = platformDownloadUrl || String(data.download_url || data.downloadUrl || data.package_url || data.packageUrl || '').trim()
+  const releaseNotes = String(data.release_notes || data.releaseNotes || data.note || data.message || '').trim()
+  const backendApiUrl = normalizeBackendUrl(data.backend_api_url || data.backendApiUrl || '')
+
+  return {
+    ...data,
+    latest_version: latestVersion,
+    download_url: downloadUrl,
+    release_notes: releaseNotes,
+    backend_api_url: backendApiUrl,
+  }
+}
+
+async function refreshRemoteRuntimeConfig() {
+  const localConfig = readAppConfig()
+  runtimeConfig = { ...localConfig }
+
+  const remoteUrl = String(localConfig.remote_config_url || '').trim()
+  const remoteRaw = remoteUrl ? await fetchRemoteJson(remoteUrl) : null
+  const remoteConfig = normalizeVersionInfo(remoteRaw) || normalizeVersionInfo(readCachedRemoteConfig())
+
+  if (remoteConfig) {
+    writeCachedRemoteConfig(remoteConfig)
+  }
+
+  if (remoteConfig?.backend_api_url) {
+    runtimeConfig.backend_api_url = remoteConfig.backend_api_url
+    serverUrl = remoteConfig.backend_api_url
+  }
+
+  const latestVersion = String(remoteConfig?.latest_version || '').trim()
+  const downloadUrl = String(remoteConfig?.download_url || '').trim()
+  const releaseNotes = String(remoteConfig?.release_notes || '').trim()
+  const backendApiUrl = normalizeBackendUrl(runtimeConfig.backend_api_url || serverUrl || '')
+  const available = !!latestVersion && compareVersions(latestVersion, getAppVersion()) > 0
+
+  updateInfo = {
+    checked: true,
+    available,
+    localVersion: getAppVersion(),
+    latestVersion,
+    downloadUrl,
+    releaseUrl: '',
+    releaseNotes,
+    manifestUrl: remoteUrl,
+    backendApiUrl,
+  }
+
+  sendUpdateInfoSnapshot()
+  return { runtimeConfig, updateInfo }
+}
+
+function getUpdateInfo() {
+  return updateInfo
 }
 
 function getConfig(key, fallback = '') {
@@ -201,6 +368,7 @@ function getStatusSnapshot() {
     proxyOn: isProxyOn,
     server: serverUrl,
     hasToken: !!authData,
+    appVersion: getAppVersion(),
     mainProxyGroup: MAIN_PROXY_GROUP,
     selectedProxyName,
     activeProxyName,
@@ -213,6 +381,10 @@ function getStatusSnapshot() {
 
 function sendStatusSnapshot() {
   win?.webContents.send('status-snapshot', getStatusSnapshot())
+}
+
+function sendUpdateInfoSnapshot() {
+  win?.webContents.send('update-info', getUpdateInfo())
 }
 
 function readCachedSubscription() {
@@ -879,6 +1051,11 @@ function stopMihomo(options = {}) {
 
 async function apiRequest(method, endpoint, body, authToken) {
   const axios = require('axios')
+  if (!serverUrl) {
+    const message = '后端地址未加载，请检查 OSS 配置'
+    console.error(`[API ${method} ${endpoint}]`, message)
+    return { message }
+  }
   const url = `${serverUrl}/api/v1${endpoint}`
   try {
     const headers = {}
@@ -1083,6 +1260,7 @@ function createWindow() {
       ::-webkit-scrollbar { width: 4px; }
       ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
     `).catch(() => {})
+    sendUpdateInfoSnapshot()
   })
 
   win.webContents.on('console-message', (_, level, message, line, sourceId) => {
@@ -1193,6 +1371,7 @@ function setupIPC() {
   ipcMain.handle('fetch-guest-config', async () => fetchGuestConfig())
   ipcMain.handle('fetch-notices', async () => fetchNotices())
   ipcMain.handle('get-app-config', async () => getRuntimeConfig())
+  ipcMain.handle('get-update-info', async () => getUpdateInfo())
   ipcMain.handle('send-email-verify', async (_, email, isforget) => sendEmailVerify(email, isforget))
   ipcMain.handle('forget-password', async (_, email, password, emailCode) => doForgetPassword(email, password, emailCode))
   ipcMain.handle('check-coupon', async (_, code, planId) => checkCoupon(code, planId))
@@ -1235,15 +1414,6 @@ function setupIPC() {
     return { success: true, selectedProxyName, activeProxyName, proxyOn: isProxyOn, switched }
   })
 
-  // Config
-  ipcMain.handle('set-server', async (_, url) => {
-    if (typeof url === 'string' && /^https?:\/\//.test(url)) {
-      serverUrl = url.replace(/\/+$/, '')
-      setConfig('serverUrl', serverUrl)
-    }
-    return { success: true }
-  })
-
   ipcMain.handle('get-status', async () => ({
     ...getStatusSnapshot(),
   }))
@@ -1281,26 +1451,31 @@ function setupIPC() {
 
   // Navigation
   ipcMain.on('show', () => win?.show())
-  ipcMain.on('quit', () => { stopMihomo(); global.isQuit = true; app.quit() })
+  ipcMain.on('quit', () => {
+    stopMihomo()
+    clearCachedRemoteConfig()
+    global.isQuit = true
+    app.quit()
+  })
 }
 
 // ─── Init ──────────────────────────────────────────────────
 
 function init() {
-  const runtimeConfig = getRuntimeConfig()
-  serverUrl = getConfig('serverUrl', runtimeConfig.backend_api_url || serverUrl)
+  serverUrl = normalizeBackendUrl(serverUrl)
 
   const savedToken = getConfig('v2board_token', '')
-    if (savedToken) subscribeToken = savedToken
-    const savedAuth = getConfig('v2board_auth', '')
-    if (savedAuth) authData = savedAuth
-    selectedProxyName = getConfig('selectedProxyName', '')
+  if (savedToken) subscribeToken = savedToken
+  const savedAuth = getConfig('v2board_auth', '')
+  if (savedAuth) authData = savedAuth
+  selectedProxyName = getConfig('selectedProxyName', '')
 
-    createWindow()
-    createTray()
-    setupIPC()
-    sendStatusSnapshot()
-  }
+  createWindow()
+  createTray()
+  setupIPC()
+  sendStatusSnapshot()
+  sendUpdateInfoSnapshot()
+}
 
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock()
@@ -1313,7 +1488,9 @@ else {
   app.on('ready', () => {
     if (process.platform === 'darwin' && typeof app.dock?.show === 'function') app.dock.show()
     global.isQuit = false
-    init()
+    refreshRemoteRuntimeConfig()
+      .catch(err => console.error('[RemoteConfig] Init error:', err.message))
+      .finally(() => init())
   })
 
   app.on('window-all-closed', (e) => {
@@ -1324,5 +1501,6 @@ else {
   app.on('before-quit', () => {
     global.isQuit = true
     stopMihomo()
+    clearCachedRemoteConfig()
   })
 }

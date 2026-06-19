@@ -1,11 +1,11 @@
 {
-  "app_name": "demo",
-  "client_name": "demo",
-  "app_version": "1.0.0",
+  "app_name": "Netch加速",
+  "client_name": "Netch加速",
+  "app_version": "1.0.2",
   "app_id": "com.v2board.client",
-  "product_name": "demo",
-  "window_title": "demo",
-  "page_title": "demo 客户端",
-  "tray_tooltip": "demo Client",
-  "backend_api_url": "http://43.139.138.166:33881"
+  "product_name": "Netch加速",
+  "window_title": "Netch加速",
+  "page_title": "Netch加速 客户端",
+  "tray_tooltip": "Netch加速 Client",
+  "remote_config_url": "https://clash-verge.cn-nb1.rains3.com/client-config.json"
 }

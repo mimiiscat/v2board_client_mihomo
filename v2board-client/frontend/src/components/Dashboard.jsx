@@ -15,7 +15,7 @@ import { DashboardNoticeSection } from './DashboardNoticeSection'
 import { ServerList } from './ServerList'
 import delayManager from '../services/delay'
 
-export function Dashboard({ userInfo, onLogout, appConfig }) {
+export function Dashboard({ userInfo, onLogout }) {
   const [activeTab, setActiveTab] = useState('servers')
   const [proxyOn, setProxyOn] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -56,8 +56,8 @@ export function Dashboard({ userInfo, onLogout, appConfig }) {
         setDelayGroupName(s?.mainProxyGroup || '🚀 节点选择')
         if (s?.traffic) setTraffic(s.traffic)
         delayManager.configure({
-          defaultUrl: latencyCfg?.defaultLatencyTest || s?.defaultLatencyTest || appConfig?.default_latency_test,
-          defaultTimeout: latencyCfg?.defaultLatencyTimeout || s?.defaultLatencyTimeout || appConfig?.default_latency_timeout,
+          defaultUrl: latencyCfg?.defaultLatencyTest || s?.defaultLatencyTest,
+          defaultTimeout: latencyCfg?.defaultLatencyTimeout || s?.defaultLatencyTimeout,
           defaultGroup: s?.mainProxyGroup || '🚀 节点选择',
         })
       })
@@ -66,11 +66,9 @@ export function Dashboard({ userInfo, onLogout, appConfig }) {
 
   useEffect(() => {
     delayManager.configure({
-      defaultUrl: appConfig?.default_latency_test,
-      defaultTimeout: appConfig?.default_latency_timeout,
       defaultGroup: delayGroupName || '🚀 节点选择',
     })
-  }, [appConfig, delayGroupName])
+  }, [delayGroupName])
 
   useEffect(() => {
     const electron = getElectron()
